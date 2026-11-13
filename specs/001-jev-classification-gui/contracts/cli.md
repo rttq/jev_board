@@ -8,7 +8,7 @@ python -m jevbench [same flags]
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--port` | `8765` | Port on 127.0.0.1. If busy, exit 1 with "port N in use, try --port". |
-| `--data-dir` | `~/.jevbench` | Where the DB, images and optional `api_key` file live. Created if missing. |
+| `--data-dir` | `~/.jevbench` | Where the DB and images live. Created if missing. |
 | `--no-browser` | off | Don't auto-open the browser. |
 
 Startup output (stdout):
@@ -16,7 +16,7 @@ Startup output (stdout):
 ```
 jevbench running at http://127.0.0.1:8765  (Ctrl+C to stop)
 data: C:\Users\me\.jevbench
-api key: found (…ab12)            # or: NOT FOUND, set TYPESAFE_API_KEY or put it in <data-dir>/api_key
+api key: found (…ab12)            # or: NOT FOUND, set TYPESAFE_API_KEY in <project>/.env
 ```
 
 Exit codes: `0` stopped with Ctrl+C · `1` startup error (port busy, data dir not writable).

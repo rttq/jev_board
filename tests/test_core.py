@@ -1,7 +1,7 @@
 """Core checks: hashing, validation, cost, storage, run flow. No API key needed (except LiveSmoke, opt-in).
 
 Run: uv run python -m unittest discover -s tests
-Live: JEVBENCH_LIVE=1 (plus TYPESAFE_API_KEY) uv run python -m unittest tests.test_core.LiveSmoke
+Live: JEVBENCH_LIVE=1 and TYPESAFE_API_KEY (env or project .env) uv run python -m unittest tests.test_core.LiveSmoke
 """
 
 import base64
@@ -17,6 +17,9 @@ import httpx2
 import typesafe_sdk as ts
 
 from jevbench import jev, server, store
+from jevbench.__main__ import load_env
+
+load_env()  # project .env feeds LiveSmoke
 
 # Canned answers shaped exactly like the API's (LiveSmoke checks the key sets against the real thing).
 CANNED = {
@@ -214,6 +217,21 @@ class TestRunFlow(Base):
         _, r2 = self.post_run(FakeJev(), {"input": APPLE, "questions": {"q1": NOUL}})
         self.assertAlmostEqual(store.get_run(self.conn, r1["id"])["cost_usd"], 118 * 0.042 / 1e6)
         self.assertAlmostEqual(r2["cost_usd"], 118 / 1e6)
+
+
+class TestEnvFile(unittest.TestCase):
+    def test_parse_and_env_wins(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / ".env"
+            f.write_text('# c\nJB_A = "x=1"\nJB_B=two\nnoise\n', encoding="utf-8")
+            os.environ["JB_B"] = "real"
+            try:
+                load_env(f)
+                self.assertEqual(os.environ["JB_A"], "x=1")
+                self.assertEqual(os.environ["JB_B"], "real")
+            finally:
+                for k in ("JB_A", "JB_B"):
+                    os.environ.pop(k, None)
 
 
 @unittest.skipUnless(os.environ.get("TYPESAFE_API_KEY") and os.environ.get("JEVBENCH_LIVE") == "1",

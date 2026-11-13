@@ -5,3 +5,4 @@ dist/
 build/
 .checks/
 .playwright-mcp/
+.env

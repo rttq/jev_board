@@ -9,14 +9,18 @@ from pathlib import Path
 from . import server, store
 
 
-def find_key(data_dir: Path) -> str | None:
-    key = os.environ.get("TYPESAFE_API_KEY", "").strip()
-    if not key:
-        f = data_dir / "api_key"
-        if f.is_file():
-            lines = f.read_text(encoding="utf-8").splitlines()
-            key = lines[0].strip() if lines else ""
-    return key or None
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"  # project root (editable install)
+
+
+def load_env(path: Path = ENV_FILE) -> None:
+    """KEY=VALUE lines into os.environ; real environment variables win."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        k, sep, v = line.partition("=")
+        k = k.strip()
+        if sep and k and not k.startswith("#"):
+            os.environ.setdefault(k, v.strip().strip("'\""))
 
 
 def main(argv=None) -> int:
@@ -33,14 +37,16 @@ def main(argv=None) -> int:
         print(f"cannot use data folder {data_dir}: {e}", file=sys.stderr)
         return 1
 
-    key = find_key(data_dir)
+    load_env()
+    key = os.environ.get("TYPESAFE_API_KEY", "").strip() or None
     client = None
     if key:
         from typesafe_sdk import TypeSafeClient
         client = TypeSafeClient(api_key=key)
 
     ctx = {"conn": conn, "client": client, "data_dir": data_dir, "notice": notice,
-           "started_at": store.now(), "key_hint": key[-4:] if key else None, "models": None}
+           "started_at": store.now(), "key_hint": key[-4:] if key else None, "models": None,
+           "env_file": ENV_FILE}
     try:
         httpd = server.make_server(ctx, args.port)
     except OSError:
@@ -51,7 +57,7 @@ def main(argv=None) -> int:
     print(f"jevbench running at {url}  (Ctrl+C to stop)", flush=True)
     print(f"data: {data_dir}", flush=True)
     print(f"api key: found (…{key[-4:]})" if key else
-          f"api key: NOT FOUND, set TYPESAFE_API_KEY or put it in {data_dir / 'api_key'}", flush=True)
+          f"api key: NOT FOUND, set TYPESAFE_API_KEY in {ENV_FILE}", flush=True)
     if notice:
         print(f"notice: {notice}", flush=True)
     if not args.no_browser:

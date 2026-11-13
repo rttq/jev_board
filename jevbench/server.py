@@ -34,7 +34,7 @@ def h_status(ctx, params, query, body):
                 pass
         ctx["models"] = models
     return 200, {"key_present": ctx.get("client") is not None, "key_hint": ctx.get("key_hint"),
-                 "data_dir": str(ctx["data_dir"]), "key_file": str(Path(ctx["data_dir"]) / "api_key"),
+                 "data_dir": str(ctx["data_dir"]), "key_file": str(ctx.get("env_file", ".env")),
                  "notice": ctx.get("notice"),
                  "server_started_at": ctx["started_at"], "models": ctx["models"]}
 
@@ -72,7 +72,7 @@ def h_post_run(ctx, params, query, body):
     if errs:
         raise ApiError(400, errs[0]["error"], errs[0]["field"], errors=errs)
     if ctx.get("client") is None:
-        raise ApiError(503, "No TypeSafe API key. Set TYPESAFE_API_KEY or put it in the api_key file in the data folder, then restart.")
+        raise ApiError(503, "No TypeSafe API key. Set TYPESAFE_API_KEY in the project .env file, then restart.")
 
     if image_bytes is not None:
         image_sha = hashlib.sha256(image_bytes).hexdigest()

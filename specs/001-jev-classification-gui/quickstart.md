@@ -3,7 +3,7 @@
 ## Setup
 
 ```powershell
-$env:TYPESAFE_API_KEY = "ts-..."     # or put it in ~/.jevbench/api_key (one line)
+$env:TYPESAFE_API_KEY = "ts-..."     # or TYPESAFE_API_KEY=ts-... in the project .env
 uv sync
 uv run jevbench                       # opens http://127.0.0.1:8765
 ```

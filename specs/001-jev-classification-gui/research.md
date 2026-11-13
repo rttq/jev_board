@@ -72,7 +72,7 @@ All findings were checked against the live TypeSafe docs (docs.typesafe.ai) on 2
 
 ## R8. API key
 
-- **Decision**: Read `TYPESAFE_API_KEY` from the environment (the SDK default). If it is unset, read the first line of `<data-dir>/api_key`. `/api/status` reports only `key_present` and the last 4 characters.
+- **Decision**: Read `TYPESAFE_API_KEY` from the environment (the SDK default). If it is unset, read it from `.env` in the project root (gitignored; real env vars win). `/api/status` reports only `key_present` and the last 4 characters.
 - **Rationale**: Meets FR-003 and FR-004 without a key-entry UI that would write the secret into the DB.
 
 ## R9. Testing

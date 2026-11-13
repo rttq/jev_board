@@ -100,7 +100,52 @@ function notBuilt(view) {
 }
 
 // ---------- Run view ----------
-const TYPE_LABEL = { noul: "Noul", choice: "Choice", score: "Score", box: "Box" };
+export const TYPE_LABEL = { noul: "Noul", choice: "Choice", score: "Score", box: "Box" };
+
+// ---------- type guide (static, works offline) ----------
+const SVG_ATTR = 'viewBox="0 0 120 44" width="120" height="44" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"';
+export const GUIDE = [
+  { type: "noul", asks: "Is this true?", returns: "P(yes) 0–1", use_when: "Clean yes/no condition",
+    pitfall: "0.5 = “unsure”, not “medium amount”. Use a Score for degree.",
+    svg: `<svg ${SVG_ATTR}><rect x="6" y="16" width="108" height="10" rx="5"/><rect x="6" y="16" width="80" height="10" rx="5" fill="currentColor" opacity=".3" stroke="none"/><line x1="86" y1="9" x2="86" y2="33" stroke-width="2.5"/><text x="4" y="42" font-size="8" fill="currentColor" stroke="none">0</text><text x="110" y="42" font-size="8" fill="currentColor" stroke="none">1</text></svg>` },
+  { type: "choice", asks: "Which one?", returns: "Option + probabilities + confidence", use_when: "Known, unordered options",
+    pitfall: "It always picks one. Pair it with a Noul “does any option fit?”.",
+    svg: `<svg ${SVG_ATTR}><rect x="6" y="5" width="96" height="9" rx="2" fill="currentColor" opacity=".55" stroke="none"/><rect x="6" y="18" width="28" height="9" rx="2" fill="currentColor" opacity=".2" stroke="none"/><rect x="6" y="31" width="12" height="9" rx="2" fill="currentColor" opacity=".2" stroke="none"/></svg>` },
+  { type: "score", asks: "Which level?", returns: "Position + level probabilities + confidence", use_when: "Ordered levels you can describe",
+    pitfall: "Each level must be concrete. Watch for split answers.",
+    svg: `<svg ${SVG_ATTR}><line x1="8" y1="22" x2="112" y2="22"/><line x1="8" y1="15" x2="8" y2="29"/><line x1="43" y1="15" x2="43" y2="29"/><line x1="77" y1="15" x2="77" y2="29"/><line x1="112" y1="15" x2="112" y2="29"/><rect x="85" y="12" width="9" height="20" rx="2" fill="currentColor" opacity=".55" stroke="none"/></svg>` },
+  { type: "box", asks: "Where in the image?", returns: "Edges as fractions + confidence", use_when: "Locate one object in a PNG/JPEG",
+    pitfall: "It always returns a box. Pair it with a Noul “is it there?”.",
+    svg: `<svg ${SVG_ATTR}><rect x="14" y="3" width="92" height="38" rx="2"/><rect x="52" y="11" width="36" height="22" stroke-width="2.5" stroke-dasharray="4 2"/></svg>` },
+];
+
+function svgNode(markup) {  // static constant markup only (never user text)
+  const t = document.createElement("template"); t.innerHTML = markup; return t.content.firstChild;
+}
+
+export function guideCard(g, current) {
+  return h("article", { class: "guide-card" + (current ? " is-current" : ""), "data-type": g.type, "aria-label": `${TYPE_LABEL[g.type]} guide` },
+    h("div", { class: "row" }, h("h2", { style: "margin:0" }, TYPE_LABEL[g.type]), h("span", { class: "muted small" }, g.asks)),
+    svgNode(g.svg),
+    h("dl", {},
+      h("dt", {}, "Returns"), h("dd", {}, g.returns),
+      h("dt", {}, "Use when"), h("dd", {}, g.use_when),
+      h("dt", {}, "Watch out"), h("dd", {}, g.pitfall)));
+}
+
+export function openCompare() {
+  const dlg = document.getElementById("dlg");
+  dlg.replaceChildren(
+    h("div", { class: "row" }, h("h1", { style: "margin:0" }, "Compare types"), h("span", { style: "flex:1" }),
+      h("button", { type: "button", onclick: () => dlg.close() }, "Close")),
+    h("div", { class: "guide-grid" }, GUIDE.map(g => guideCard(g))));
+  dlg.showModal();
+}
+
+function guideSlot(type) {
+  return [guideCard(GUIDE.find(g => g.type === type), true),
+          h("button", { type: "button", style: "margin-top:8px", onclick: openCompare }, "Compare types")];
+}
 
 const draft = {
   kind: "text", text: "", fields: '{\n  "text": ""\n}', image: null, // {b64, url, name}
@@ -196,7 +241,7 @@ function questionCard(q, idx, rerender) {
   const f = `q.${q.id}`;
   const touch = () => { draft.errors = {}; };
   const typeSel = h("select", { "aria-label": "Question type",
-    onchange: e => { q.type = e.target.value; rerender(); } },
+    onchange: e => { q.type = e.target.value; draft.focus = q.id; rerender(); } },
     Object.entries(TYPE_LABEL).map(([v, l]) => h("option", { value: v, selected: q.type === v }, l)));
   let crit = null;
   if (q.type === "choice") crit = choiceEditor(q.choice, touch, rerender);
@@ -207,7 +252,7 @@ function questionCard(q, idx, rerender) {
       placeholder: "Yes means… e.g. the fruit itself is described", oninput: e => { q.yes = e.target.value; touch(); } })),
     h("div", { class: "crit-row" }, h("input", { value: q.no, "aria-label": "what counts as no",
       placeholder: "No means… e.g. a brand or another fruit", oninput: e => { q.no = e.target.value; touch(); } })));
-  return h("div", { class: "qcard stack", "data-qid": q.id },
+  return h("div", { class: "qcard stack", "data-qid": q.id, onfocusin: () => showGuide(q) },
     h("div", { class: "row" },
       typeSel,
       h("input", { class: "qid" + (draft.errors[f + ".id"] ? " has-err" : ""), value: q.id, "aria-label": "Question ID",
@@ -222,6 +267,12 @@ function questionCard(q, idx, rerender) {
     errText(f + ".instructions"),
     crit,
     errText(f + ".criteria"));
+}
+
+function showGuide(q) {
+  draft.focus = q.id;
+  const slot = document.getElementById("guide-slot");
+  if (slot && slot.querySelector(".guide-card")?.dataset.type !== q.type) slot.replaceChildren(...guideSlot(q.type));
 }
 
 function placeholderFor(type) {
@@ -263,6 +314,7 @@ function inputPanel(rerender) {
 
 function runReason() {
   if (!app.status.key_present) return "No API key. See the banner above.";
+  if (draft.questions.some(q => q.type === "box") && !draft.image) return "Box needs an image. Attach a PNG or JPEG.";
   if (draft.running) return "Running…";
   return null;
 }
@@ -311,8 +363,9 @@ function renderRun(view) {
         runBtn,
         reason && !draft.running && h("span", { class: "reason" }, reason))));
 
+  const focused = draft.questions.find(q => q.id === draft.focus) || draft.questions[0];
   view.append(
-    h("div", { class: "run-layout" }, editor, h("aside", { id: "guide-slot", "aria-label": "Type guide" })),
+    h("div", { class: "run-layout" }, editor, h("aside", { id: "guide-slot", "aria-label": "Type guide" }, guideSlot(focused.type))),
     h("section", { class: "results", "aria-live": "polite" }, draft.result && renderResult(draft.result, draft.questions)));
   view.onkeydown = e => { if (e.ctrlKey && e.key === "Enter" && !runReason()) { e.preventDefault(); doRun(rerender); } };
 }
@@ -401,6 +454,7 @@ async function boot() {
   }
   applyPrefs();
   showBanner();
+  await import("./experiments.js");  // registers its views; loaded after app.js so the import cycle is safe
   addEventListener("hashchange", route);
   route();
 }

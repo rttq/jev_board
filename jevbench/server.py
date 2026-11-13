@@ -97,6 +97,60 @@ def h_get_run(ctx, params, query, body):
     return 200, run
 
 
+def _exp(ctx, exp_id):
+    exp = store.get_experiment(ctx["conn"], int(exp_id))
+    if exp is None:
+        raise ApiError(404, "experiment not found")
+    return exp
+
+
+def _full(ctx, exp_id, warnings=()):
+    exp = _exp(ctx, exp_id)
+    return 200, {"experiment": exp, **store.experiment_cells(ctx["conn"], exp), "warnings": list(warnings)}
+
+
+def _exp_call(fn, *args):
+    try:
+        return fn(*args)
+    except store.ExpError as e:
+        raise ApiError(e.status, e.error, None, **({"rows": e.rows} if e.rows else {}))
+
+
+def h_list_exps(ctx, params, query, body):
+    return 200, store.list_experiments(ctx["conn"])
+
+
+def h_create_exp(ctx, params, query, body):
+    exp_id, warnings = _exp_call(store.create_experiment, ctx["conn"], body)
+    return _full(ctx, exp_id, warnings)
+
+
+def h_get_exp(ctx, params, query, body):
+    return _full(ctx, params[0])
+
+
+def h_put_exp(ctx, params, query, body):
+    _exp(ctx, params[0])
+    warnings = _exp_call(store.update_experiment, ctx["conn"], int(params[0]), body)
+    return _full(ctx, params[0], warnings)
+
+
+def h_delete_exp(ctx, params, query, body):
+    if not store.delete_experiment(ctx["conn"], int(params[0])):
+        raise ApiError(404, "experiment not found")
+    return 204, None
+
+
+def h_dup_exp(ctx, params, query, body):
+    return _full(ctx, _exp_call(store.duplicate_experiment, ctx["conn"], int(params[0])))
+
+
+def h_plan_exp(ctx, params, query, body):
+    model = (query.get("model") or [None])[0] or store.get_prefs(ctx["conn"])["default_model"]
+    price = store.get_prefs(ctx["conn"])["price_per_mtok"]
+    return 200, store.experiment_plan(ctx["conn"], _exp(ctx, params[0]), model, price)
+
+
 ROUTES = [
     ("GET", r"/api/status", h_status),
     ("GET", r"/api/prefs", h_get_prefs),
@@ -104,6 +158,13 @@ ROUTES = [
     ("POST", r"/api/prefs/reset", h_reset_prefs),
     ("POST", r"/api/runs", h_post_run),
     ("GET", r"/api/runs/(\d+)", h_get_run),
+    ("GET", r"/api/experiments", h_list_exps),
+    ("POST", r"/api/experiments", h_create_exp),
+    ("GET", r"/api/experiments/(\d+)", h_get_exp),
+    ("PUT", r"/api/experiments/(\d+)", h_put_exp),
+    ("DELETE", r"/api/experiments/(\d+)", h_delete_exp),
+    ("POST", r"/api/experiments/(\d+)/duplicate", h_dup_exp),
+    ("GET", r"/api/experiments/(\d+)/plan", h_plan_exp),
 ]
 ROUTES = [(m, re.compile(p + r"$"), fn) for m, p, fn in ROUTES]
 
@@ -141,7 +202,8 @@ def make_handler(ctx):
                 self.wfile.write(data)
 
         def send_json(self, status, obj):
-            self._send(status, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+            data = b"" if status == 204 else json.dumps(obj, ensure_ascii=False).encode()
+            self._send(status, data, "application/json; charset=utf-8")
 
         def _file(self, base: Path, name: str):
             p = (base / name).resolve()

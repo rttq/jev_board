@@ -219,6 +219,98 @@ class TestRunFlow(Base):
         self.assertAlmostEqual(r2["cost_usd"], 118 / 1e6)
 
 
+class TestExperiments(Base):
+    def exp(self, fake=None, **over):
+        body = {"name": "apple-wording", "type": "noul", "criteria": None,
+                "rows": [{"input": APPLE}, {"input": "Red round veg", "label": "no"}],
+                "columns": [{"instructions": NOUL["instructions"]}, {"instructions": "Does `text` describe an apple?"}],
+                **over}
+        st, out = server.dispatch(self.ctx(fake), "POST", "/api/experiments", {}, body)
+        self.assertEqual(st, 200, out)
+        return out
+
+    def get(self, exp_id, fake=None):
+        return server.dispatch(self.ctx(fake), "GET", f"/api/experiments/{exp_id}", {}, None)[1]
+
+    def test_create_assigns_keys_and_hashes(self):
+        e = self.exp()["experiment"]
+        self.assertEqual([r["key"] for r in e["rows"]], ["r1", "r2"])
+        self.assertEqual([c["key"] for c in e["columns"]], ["c1", "c2"])
+        self.assertEqual(e["rows"][0]["input_hash"], jev.input_hash(APPLE, None))
+        self.assertEqual(e["columns"][0]["question_hash"], jev.question_hash(NOUL))
+        self.assertEqual(e["view"]["threshold"], {"low": 0.5, "high": 0.8})
+
+    def test_cells_from_experiment_and_adhoc_runs_latest_wins(self):
+        fake = FakeJev()
+        e = self.exp(fake)["experiment"]
+        self.post_run(fake, {"input": APPLE, "questions": {"c1": NOUL}, "experiment_id": e["id"]})
+        out = self.get(e["id"], fake)
+        first = out["cells"]["r1"]["c1"]["jev-1.14.0"]["run_id"]
+        self.assertEqual(out["cost"]["runs"], 1)
+        # an ad-hoc run (no experiment) with the same text and wording fills the same cell, and is newer
+        st, run = self.post_run(fake, {"input": APPLE, "questions": {"anything": NOUL}})
+        out = self.get(e["id"], fake)
+        self.assertEqual(out["cells"]["r1"]["c1"]["jev-1.14.0"]["run_id"], run["id"])
+        self.assertNotEqual(first, run["id"])
+        self.assertEqual(out["cost"]["runs"], 1)  # experiment cost counts only its own runs
+        self.assertIn(str(run["id"]), out["run_costs"])
+        self.assertNotIn("r2", out["cells"])
+
+    def test_answered_wording_is_immutable_new_column_ok(self):
+        fake = FakeJev()
+        e = self.exp(fake)["experiment"]
+        self.post_run(fake, {"input": APPLE, "questions": {"c1": NOUL}, "experiment_id": e["id"]})
+        cols = [dict(c) for c in e["columns"]]
+        cols[0]["instructions"] = "Changed wording?"
+        st, out = server.dispatch(self.ctx(fake), "PUT", f"/api/experiments/{e['id']}", {}, {**e, "columns": cols})
+        self.assertEqual(st, 409)
+        st, out = server.dispatch(self.ctx(fake), "PUT", f"/api/experiments/{e['id']}", {},
+                                  {**e, "columns": e["columns"] + [{"instructions": "Apple (the fruit)?"}]})
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["experiment"]["columns"][-1]["key"], "c3")
+        st, out = server.dispatch(self.ctx(fake), "PUT", f"/api/experiments/{e['id']}", {}, {**e, "type": "score",
+                                  "criteria": ["a", "b"]})
+        self.assertEqual(st, 409)
+
+    def test_plan_lists_only_missing_cells(self):
+        fake = FakeJev()
+        e = self.exp(fake)["experiment"]
+        for r in e["rows"]:
+            qs = {c["key"]: {"type": "noul", "instructions": c["instructions"]} for c in e["columns"]}
+            self.post_run(fake, {"input": r["input"], "questions": qs, "experiment_id": e["id"], "model": "jev-latest"})
+        plan = server.dispatch(self.ctx(fake), "GET", f"/api/experiments/{e['id']}/plan", {"model": ["jev-latest"]}, None)[1]
+        self.assertEqual(plan["requests"], [])
+        self.assertEqual(plan["resolved_model"], "jev-1.14.0")
+        server.dispatch(self.ctx(fake), "PUT", f"/api/experiments/{e['id']}", {},
+                        {**e, "columns": e["columns"] + [{"instructions": "Apple (the fruit)?"}]})
+        plan = server.dispatch(self.ctx(fake), "GET", f"/api/experiments/{e['id']}/plan", {"model": ["jev-latest"]}, None)[1]
+        self.assertEqual(plan["requests"], [{"row": "r1", "columns": ["c3"]}, {"row": "r2", "columns": ["c3"]}])
+        self.assertEqual(plan["estimated_tokens"], 2 * 118)  # average of the experiment's real runs
+        self.assertAlmostEqual(plan["estimated_cost_usd"], 236 * 0.042 / 1e6)
+
+    def test_invalid_labels_give_per_row_errors(self):
+        st, out = server.dispatch(self.ctx(), "POST", "/api/experiments", {},
+                                  {"name": "x", "type": "noul", "rows": [{"input": "a", "label": "yes"},
+                                   {"input": "b", "label": "maybe"}, {"input": ""}], "columns": []})
+        self.assertEqual(st, 400)
+        self.assertEqual([r["index"] for r in out["rows"]], [1, 2])
+
+    def test_duplicates_merge_with_warning_and_delete_keeps_runs(self):
+        fake = FakeJev()
+        out = self.exp(fake, rows=[{"input": "a"}, {"input": "a"}])
+        self.assertEqual(len(out["experiment"]["rows"]), 1)
+        self.assertTrue(out["warnings"])
+        e = out["experiment"]
+        self.post_run(fake, {"input": {"kind": "text", "text": "a"}, "questions": {"c1": NOUL}, "experiment_id": e["id"]})
+        st, dup = server.dispatch(self.ctx(fake), "POST", f"/api/experiments/{e['id']}/duplicate", {}, None)
+        self.assertEqual(dup["experiment"]["name"], "apple-wording copy")
+        self.assertEqual(server.dispatch(self.ctx(fake), "DELETE", f"/api/experiments/{e['id']}", {}, None)[0], 204)
+        self.assertEqual(self.run_count(), 1)
+        self.assertIsNone(self.conn.execute("SELECT experiment_id FROM runs").fetchone()[0])
+        self.assertEqual(server.dispatch(self.ctx(), "POST", "/api/experiments", {},
+                                         {"name": "apple-wording copy", "type": "noul"})[0], 409)
+
+
 class TestNoulCriteria(unittest.TestCase):
     def test_shape(self):
         ok = lambda c: not jev.validate_questions({"q1": {**NOUL, "criteria": c}}, False, "jev-latest")

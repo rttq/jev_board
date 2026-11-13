@@ -17,6 +17,16 @@ uv run python -m unittest discover -s tests   # store, hashes, cells, from-runs,
 node --test tests/                            # metrics.js: bands, spread, composite, accuracy, best threshold, Brier, MAE
 ```
 
+Opt-in live contract check (real API, a fraction of a cent). It confirms the real response shape and that the test fakes still match it:
+
+```powershell
+$env:JEVBENCH_LIVE = "1"; uv run python -m unittest tests.test_core.LiveSmoke
+```
+
+## Browser checks (during implementation)
+
+At the US1, US4 and US6 checkpoints and at the end, the coding agent drives the real page with the Playwright MCP tools against a throwaway data dir (`--data-dir .checks/data --port 8799`). It asserts the steps below, captures light, dark and phone-width screenshots to `.checks/`, and logs pass/fail to `.checks/REPORT.md` (gitignored).
+
 ## Manual verification (maps to spec user stories)
 
 1. **US1 single run**: Input `A round red fruit with a crisp, sweet bite`. Noul ``Is `text` describing an apple?`` → a high %, `jev-1.14.0`, tokens and cost. Add a Choice and a Score → one request, one cost. Unset the key → setup message, nothing recorded.

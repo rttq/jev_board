@@ -63,6 +63,10 @@ def validate_questions(questions, has_image: bool, model: str) -> list[dict]:
             errs.append({"field": f + ".criteria", "error": "a Choice needs at least 2 options"})
         if t == "score" and not (isinstance(c, list) and len([x for x in c if str(x).strip()]) >= 2 and all(str(x).strip() for x in c)):
             errs.append({"field": f + ".criteria", "error": "a Score needs at least 2 non-empty levels"})
+        if t == "noul" and c is not None and not (
+                isinstance(c, dict) and c and set(c) <= {"true", "false"}
+                and all(isinstance(v, str) and v.strip() for v in c.values())):
+            errs.append({"field": f + ".criteria", "error": "Noul criteria must be {true: text, false: text} (either optional)"})
         if t == "box":
             if not has_image:
                 errs.append({"field": f, "error": "Box needs an image"})

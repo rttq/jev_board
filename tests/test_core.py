@@ -219,6 +219,16 @@ class TestRunFlow(Base):
         self.assertAlmostEqual(r2["cost_usd"], 118 / 1e6)
 
 
+class TestNoulCriteria(unittest.TestCase):
+    def test_shape(self):
+        ok = lambda c: not jev.validate_questions({"q1": {**NOUL, "criteria": c}}, False, "jev-latest")
+        self.assertTrue(ok({"true": "the fruit itself", "false": "a brand"}))
+        self.assertTrue(ok({"true": "the fruit itself"}))
+        self.assertFalse(ok("plain text"))  # the API rejects this: "criteria must be an object"
+        self.assertFalse(ok({"yes": "x"}))
+        self.assertFalse(ok({}))
+
+
 class TestEnvFile(unittest.TestCase):
     def test_parse_and_env_wins(self):
         with tempfile.TemporaryDirectory() as d:
@@ -240,7 +250,8 @@ class LiveSmoke(unittest.TestCase):
     def test_real_response_shape_matches_fakes(self):
         client = ts.TypeSafeClient()
         out = jev.call_jev(client, "jev-latest", {"text": "A round red fruit with a crisp, sweet bite"},
-                           {"n": NOUL, "c": CHOICE, "s": SCORE})
+                           {"n": NOUL, "c": CHOICE, "s": SCORE,
+                            "nc": {**NOUL, "criteria": {"true": "the fruit itself", "false": "a brand or another fruit"}}})
         self.assertEqual(out["status"], "ok", out["error"])
         self.assertTrue(out["model_used"].startswith("jev-"))
         self.assertIsInstance(out["input_tokens"], int)

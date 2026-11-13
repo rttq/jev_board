@@ -111,7 +111,7 @@ function newQuestion(type) {
   const used = new Set(draft.questions.map(q => q.id));
   let n = 1; while (used.has("q" + n)) n++;
   return { id: "q" + n, type, instructions: "", choice: [{ key: "", desc: "" }, { key: "", desc: "" }],
-           levels: ["", ""], clarify: "" };
+           levels: ["", ""], yes: "", no: "" };
 }
 
 // Wire format for one question (criteria shape depends on type).
@@ -119,7 +119,12 @@ export function toWire(q) {
   const w = { type: q.type, instructions: q.instructions.trim() };
   if (q.type === "choice") w.criteria = Object.fromEntries(q.choice.filter(o => o.key.trim()).map(o => [o.key.trim(), o.desc.trim() || null]));
   if (q.type === "score") w.criteria = q.levels.map(l => l.trim());
-  if (q.type === "noul" && q.clarify.trim()) w.criteria = q.clarify.trim();
+  if (q.type === "noul") {  // API shape: {true?, false?}, omitted when both empty
+    const c = {};
+    if (q.yes.trim()) c.true = q.yes.trim();
+    if (q.no.trim()) c.false = q.no.trim();
+    if (Object.keys(c).length) w.criteria = c;
+  }
   return w;
 }
 
@@ -196,10 +201,12 @@ function questionCard(q, idx, rerender) {
   let crit = null;
   if (q.type === "choice") crit = choiceEditor(q.choice, touch, rerender);
   if (q.type === "score") crit = levelsEditor(q.levels, touch, rerender);
-  if (q.type === "noul") crit = h("details", { open: !!q.clarify },
+  if (q.type === "noul") crit = h("details", { open: !!(q.yes || q.no) },
     h("summary", { class: "muted small" }, "Clarify what yes / no mean (optional)"),
-    h("textarea", { value: q.clarify, rows: 2, placeholder: "e.g. Yes only if the fruit itself is described, not a brand.",
-                    oninput: e => { q.clarify = e.target.value; touch(); } }));
+    h("div", { class: "crit-row" }, h("input", { value: q.yes, "aria-label": "what counts as yes",
+      placeholder: "Yes means… e.g. the fruit itself is described", oninput: e => { q.yes = e.target.value; touch(); } })),
+    h("div", { class: "crit-row" }, h("input", { value: q.no, "aria-label": "what counts as no",
+      placeholder: "No means… e.g. a brand or another fruit", oninput: e => { q.no = e.target.value; touch(); } })));
   return h("div", { class: "qcard stack", "data-qid": q.id },
     h("div", { class: "row" },
       typeSel,

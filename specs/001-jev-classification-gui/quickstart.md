@@ -14,7 +14,7 @@ Without uv: `pip install -e .` then `jevbench` (or `python -m jevbench`).
 
 ```powershell
 uv run python -m unittest discover -s tests   # store, hashes, cells, from-runs, 409, cost, export
-node --test tests/                            # metrics.js: bands, spread, composite, accuracy, best threshold, Brier, MAE
+node --test "tests/*.test.mjs"                            # metrics.js: bands, spread, composite, accuracy, best threshold, Brier, MAE
 ```
 
 Opt-in live contract check (real API, a fraction of a cent). It confirms the real response shape and that the test fakes still match it:

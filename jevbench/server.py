@@ -1,0 +1,204 @@
+"""Local HTTP server: static page + JSON API. Route handlers are plain functions for testability."""
+
+import hashlib
+import json
+import mimetypes
+import os
+import re
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from . import jev, store
+
+STATIC = Path(__file__).parent / "static"
+STATIC_MODELS = ["jev-latest", "jev-preview", "jev-1.14.0", "jev-1.13.0"]
+
+
+class ApiError(Exception):
+    def __init__(self, status: int, error: str, field: str | None = None, **extra):
+        self.status, self.error, self.field, self.extra = status, error, field, extra
+
+
+# ---------- handlers: fn(ctx, params, query, body) -> (status, obj) ----------
+
+def h_status(ctx, params, query, body):
+    if ctx.get("models") is None:
+        models = list(STATIC_MODELS)
+        if ctx.get("client"):
+            try:  # best effort, once
+                for m in ctx["client"].models.list().models:
+                    if m.name not in models:
+                        models.append(m.name)
+            except Exception:
+                pass
+        ctx["models"] = models
+    return 200, {"key_present": ctx.get("client") is not None, "key_hint": ctx.get("key_hint"),
+                 "data_dir": str(ctx["data_dir"]), "key_file": str(Path(ctx["data_dir"]) / "api_key"),
+                 "notice": ctx.get("notice"),
+                 "server_started_at": ctx["started_at"], "models": ctx["models"]}
+
+
+def h_get_prefs(ctx, params, query, body):
+    return 200, store.get_prefs(ctx["conn"])
+
+
+def h_put_prefs(ctx, params, query, body):
+    return 200, store.put_prefs(ctx["conn"], body or {})
+
+
+def h_reset_prefs(ctx, params, query, body):
+    return 200, store.reset_prefs(ctx["conn"])
+
+
+def h_post_run(ctx, params, query, body):
+    body = body or {}
+    inp = body.get("input") or {}
+    if inp.get("kind", "text") not in ("text", "json"):
+        raise ApiError(400, "input.kind must be text or json", "input.kind")
+    if inp.get("kind") == "json" and not isinstance(inp.get("fields"), dict):
+        raise ApiError(400, "fields must be a JSON object", "input.fields")
+    inp = {"kind": "json", "fields": inp["fields"]} if inp.get("kind") == "json" else {"kind": "text", "text": str(inp.get("text", ""))}
+    model = body.get("model") or store.get_prefs(ctx["conn"])["default_model"]
+    questions = body.get("questions")
+
+    image_bytes = ext = image_sha = None
+    if body.get("image_base64"):
+        try:
+            image_bytes, ext = jev.validate_image(body["image_base64"])
+        except ValueError as e:
+            raise ApiError(400, str(e), "image")
+    errs = jev.validate_questions(questions, image_bytes is not None, model)
+    if errs:
+        raise ApiError(400, errs[0]["error"], errs[0]["field"], errors=errs)
+    if ctx.get("client") is None:
+        raise ApiError(503, "No TypeSafe API key. Set TYPESAFE_API_KEY or put it in the api_key file in the data folder, then restart.")
+
+    if image_bytes is not None:
+        image_sha = hashlib.sha256(image_bytes).hexdigest()
+        path = Path(ctx["data_dir"]) / "images" / f"{image_sha}.{ext}"
+        if not path.exists():
+            path.write_bytes(image_bytes)
+
+    result = jev.call_jev(ctx["client"], model, jev.build_state(inp, image_bytes), questions)
+    price = store.get_prefs(ctx["conn"])["price_per_mtok"]
+    run = {**result, "input": inp, "input_hash": jev.input_hash(inp, image_sha), "image_sha": image_sha,
+           "questions": questions, "model_requested": model, "experiment_id": body.get("experiment_id"),
+           "price_per_mtok": price,
+           "cost_usd": jev.cost_usd(result["input_tokens"], price) if result["status"] == "ok" else None}
+    run_id = store.insert_run(ctx["conn"], run)
+    return 200, store.get_run(ctx["conn"], run_id)
+
+
+def h_get_run(ctx, params, query, body):
+    run = store.get_run(ctx["conn"], int(params[0]))
+    if run is None:
+        raise ApiError(404, "run not found")
+    return 200, run
+
+
+ROUTES = [
+    ("GET", r"/api/status", h_status),
+    ("GET", r"/api/prefs", h_get_prefs),
+    ("PUT", r"/api/prefs", h_put_prefs),
+    ("POST", r"/api/prefs/reset", h_reset_prefs),
+    ("POST", r"/api/runs", h_post_run),
+    ("GET", r"/api/runs/(\d+)", h_get_run),
+]
+ROUTES = [(m, re.compile(p + r"$"), fn) for m, p, fn in ROUTES]
+
+
+def dispatch(ctx, method, path, query, body):
+    """Return (status, obj). Raises nothing; errors become {"error", "field"} bodies."""
+    for m, rx, fn in ROUTES:
+        match = rx.match(path)
+        if match and m == method:
+            try:
+                return fn(ctx, match.groups(), query, body)
+            except ApiError as e:
+                return e.status, {"error": e.error, "field": e.field, **e.extra}
+    return 404, {"error": f"no route for {method} {path}", "field": None}
+
+
+# ---------- HTTP plumbing ----------
+
+def make_handler(ctx):
+    class Handler(BaseHTTPRequestHandler):
+        server_version = "jevbench"
+
+        def log_message(self, fmt, *args):  # keep the terminal quiet
+            pass
+
+        def _send(self, status, data: bytes, ctype, headers=None):
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
+            self.end_headers()
+            if status != 204:
+                self.wfile.write(data)
+
+        def send_json(self, status, obj):
+            self._send(status, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+
+        def _file(self, base: Path, name: str):
+            p = (base / name).resolve()
+            if base.resolve() not in p.parents or not p.is_file():
+                return self.send_json(404, {"error": "not found", "field": None})
+            ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+            if p.suffix == ".js":
+                ctype = "text/javascript"
+            self._send(200, p.read_bytes(), ctype + ("; charset=utf-8" if ctype.startswith("text/") else ""))
+
+        def _handle(self, method):
+            url = urlparse(self.path)
+            path = url.path
+            if method == "GET" and path == "/":
+                return self._file(STATIC, "index.html")
+            if method == "GET" and path.startswith("/static/"):
+                return self._file(STATIC, path[len("/static/"):])
+            if method == "GET" and path.startswith("/api/images/"):
+                sha = path.rsplit("/", 1)[1]
+                if re.fullmatch(r"[0-9a-f]{64}", sha):
+                    for ext in ("png", "jpg"):
+                        if (Path(ctx["data_dir"]) / "images" / f"{sha}.{ext}").exists():
+                            return self._file(Path(ctx["data_dir"]) / "images", f"{sha}.{ext}")
+                return self.send_json(404, {"error": "image not found", "field": None})
+            body = None
+            length = int(self.headers.get("Content-Length") or 0)
+            if length:
+                try:
+                    body = json.loads(self.rfile.read(length))
+                except json.JSONDecodeError:
+                    return self.send_json(400, {"error": "body is not valid JSON", "field": None})
+            status, obj = dispatch(ctx, method, path, parse_qs(url.query), body)
+            self.send_json(status, obj)
+
+        def do_GET(self):
+            self._handle("GET")
+
+        def do_POST(self):
+            self._handle("POST")
+
+        def do_PUT(self):
+            self._handle("PUT")
+
+        def do_PATCH(self):
+            self._handle("PATCH")
+
+        def do_DELETE(self):
+            self._handle("DELETE")
+
+    return Handler
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+    # On Windows SO_REUSEADDR lets two servers share a port silently; we want "port in use" instead.
+    allow_reuse_address = os.name != "nt"
+
+
+def make_server(ctx, port: int) -> ThreadingHTTPServer:
+    return Server(("127.0.0.1", port), make_handler(ctx))

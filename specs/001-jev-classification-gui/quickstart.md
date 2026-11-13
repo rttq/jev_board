@@ -44,5 +44,5 @@ At the US1, US4 and US6 checkpoints and at the end, the coding agent drives the 
 | What | Where |
 |------|-------|
 | Code | `jevbench/` |
-| Data | `~/.jevbench/jevbench.db`, `~/.jevbench/images/` |
+| Data | `data/jevbench.db`, `data/images/` (project folder, gitignored) |
 | Tests | `tests/test_core.py`, `tests/metrics.test.mjs` |

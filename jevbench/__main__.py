@@ -9,7 +9,8 @@ from pathlib import Path
 from . import server, store
 
 
-ENV_FILE = Path(__file__).resolve().parent.parent / ".env"  # project root (editable install)
+ROOT = Path(__file__).resolve().parent.parent  # project root (editable install)
+ENV_FILE = ROOT / ".env"
 
 
 def load_env(path: Path = ENV_FILE) -> None:
@@ -26,7 +27,7 @@ def load_env(path: Path = ENV_FILE) -> None:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="jevbench", description="Local workbench for TypeSafe Jev")
     ap.add_argument("--port", type=int, default=8765)
-    ap.add_argument("--data-dir", default=str(Path.home() / ".jevbench"))
+    ap.add_argument("--data-dir", default=str(ROOT / "data"))
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args(argv)
 

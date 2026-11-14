@@ -12,16 +12,18 @@ const vname = key => key.replace(/^c/, "v").replace(/@.*/, "");
 const TAG = { yes: "YES", review: "REV", no: "NO" };
 
 // ---------- list ----------
+export async function newExperiment() {
+  const list = await api("GET", "/api/experiments");
+  const names = new Set(list.map(e => e.name));
+  let n = list.length + 1; while (names.has(`Experiment ${n}`)) n++;
+  const out = await api("POST", "/api/experiments", { name: `Experiment ${n}`, type: "noul", criteria: null, rows: [], columns: [] });
+  location.hash = `#/experiments/${out.experiment.id}`;
+}
+
 async function renderList(view) {
   const list = await api("GET", "/api/experiments");
-  const create = async () => {
-    const names = new Set(list.map(e => e.name));
-    let n = list.length + 1; while (names.has(`Experiment ${n}`)) n++;
-    const out = await api("POST", "/api/experiments", { name: `Experiment ${n}`, type: "noul", criteria: null, rows: [], columns: [] });
-    location.hash = `#/experiments/${out.experiment.id}`;
-  };
   view.append(h("div", { class: "row" }, h("h1", { style: "margin:0" }, "Experiments"), h("span", { style: "flex:1" }),
-    h("button", { type: "button", class: "primary", onclick: create }, "New experiment")));
+    h("button", { type: "button", class: "primary", title: "Alt+N", onclick: newExperiment }, "New experiment")));
   if (!list.length) {
     view.append(h("p", { class: "muted" }, "An experiment is a matrix: inputs as rows, wordings of one question as columns. ",
       "Create one to compare wordings across many inputs."));
@@ -414,7 +416,7 @@ function cellText(x, rv) {
   return [h("span", { class: "v" }, fmtProb(x.v)), h("span", { class: `tag tag-${x.band}` }, TAG[x.band]), missMark(x.miss), extra];
 }
 
-const missMark = miss => miss && h("span", { class: "x", title: "Disagrees with the label", "aria-label": "misclassified" }, "✕");
+const missMark = miss => miss && h("span", { class: "x", title: "Disagrees with the label", role: "img", "aria-label": "misclassified" }, "✕");
 const hasLabels = () => S.exp.rows.some(r => r.label != null);
 
 function labelOptions() {
@@ -459,11 +461,41 @@ function calText(m, best) {
 function cellTd(rowKey, colKey, x, errorInfo) {
   const sel = S.selected && S.selected.row === rowKey && S.selected.col === colKey;
   const open = () => { S.selected = { row: rowKey, col: colKey }; drawPanel(); markSelected(); };
-  const attrs = { tabindex: 0, "data-cell": `${rowKey}|${colKey}`, class: "cell" + (sel ? " is-sel" : ""),
-                  onclick: open, onkeydown: ev => { if (ev.key === "Enter") open(); } };
+  const attrs = { tabindex: -1, "data-cell": `${rowKey}|${colKey}`, class: "cell" + (sel ? " is-sel" : ""), onclick: open };
   if (x) return h("td", { ...attrs, class: attrs.class + (x.miss ? " miss" : ""), style: S.exp.view.overlay === "cost" ? "" : `--v:${x.v}` }, cellText(x));
   if (errorInfo) return h("td", { ...attrs, class: attrs.class + " failed", title: errorInfo.error, "aria-label": "failed: " + errorInfo.error }, "!");
-  return h("td", { ...attrs, class: attrs.class + " empty", title: "not run yet" }, "·");
+  return h("td", { ...attrs, class: attrs.class + " empty", title: "not run yet", "aria-label": "not run yet" }, "·");
+}
+
+// One tab stop for the whole grid (roving tabindex); arrows move between cells, Enter opens the panel.
+const STEP = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
+function rovingGrid(table, focusKey) {
+  const cells = table ? [...table.querySelectorAll("td[data-cell]")] : [];
+  if (!cells.length) return;
+  const start = cells.find(c => c.dataset.cell === focusKey) || table.querySelector("td.is-sel[data-cell]") || cells[0];
+  start.tabIndex = 0;
+  if (focusKey && start.dataset.cell === focusKey) start.focus();
+  table.addEventListener("focusin", ev => {
+    const td = ev.target.closest("td[data-cell]"); if (!td) return;
+    for (const c of table.querySelectorAll('td[data-cell][tabindex="0"]')) c.tabIndex = -1;
+    td.tabIndex = 0;
+  });
+  table.addEventListener("keydown", ev => {
+    const td = ev.target.closest("td[data-cell]"); if (!td) return;
+    if (ev.key === "Enter") { ev.preventDefault(); return td.click(); }
+    const step = STEP[ev.key]; if (!step) return;
+    ev.preventDefault();
+    let tr = td.parentElement, i = td.cellIndex, next = null;
+    if (step[1]) {
+      next = tr.cells[i + step[1]];
+      while (next && !next.dataset.cell) next = tr.cells[next.cellIndex + step[1]];
+    } else {
+      for (tr = step[0] < 0 ? tr.previousElementSibling : tr.nextElementSibling; tr && !next;
+           tr = step[0] < 0 ? tr.previousElementSibling : tr.nextElementSibling)
+        if (tr.cells[i]?.dataset.cell) next = tr.cells[i];
+    }
+    next?.focus();
+  });
 }
 
 function markSelected() {
@@ -527,7 +559,9 @@ function drawGrid() {
     wrap.replaceChildren(h("p", { class: "muted panel" }, "Add inputs and at least one variant in Setup to see the matrix."));
     return drawPanel();
   }
+  const focusKey = wrap.contains(document.activeElement) ? document.activeElement.dataset.cell : null;  // keep focus across live redraws
   wrap.replaceChildren(v.pivot ? pivotTable(result) : mainTable(result));
+  rovingGrid(wrap.querySelector("table.grid"), focusKey);
   drawPanel();
 }
 

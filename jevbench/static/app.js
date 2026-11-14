@@ -73,7 +73,8 @@ const VERDICT = { yes: "YES", review: "REVIEW", no: "NO" };
 const LEVEL = { yes: "HIGH", review: "MEDIUM", no: "LOW" }; // for confidence, which is not a yes/no verdict
 export function bandTag(v, t, labels = VERDICT) {
   const b = bandOf(v, t);
-  return h("span", { class: `tag tag-${b}`, title: `thresholds ${t?.low ?? BAND.low} / ${t?.high ?? BAND.high}` }, labels[b]);
+  return h("span", { class: `tag tag-${b}`, title: `thresholds ${t?.low ?? BAND.low} / ${t?.high ?? BAND.high}`,
+                     role: "img", "aria-label": `${labels === LEVEL ? "confidence" : "verdict"} ${labels[b].toLowerCase()}` }, labels[b]);
 }
 const confTag = v => bandTag(v, BAND, LEVEL);
 
@@ -196,6 +197,13 @@ function fromWire(id, w) {
   if (w.type === "score") q.levels = (w.criteria || []).map(l => (typeof l === "string" ? l : JSON.stringify(l)));
   if (w.type === "noul") { q.yes = w.criteria?.true || ""; q.no = w.criteria?.false || ""; }
   return q;
+}
+
+export async function newRun() {
+  const dirty = draft.text.trim() || draft.image || draft.questions.some(q => q.instructions.trim());
+  if (dirty && !(await confirmDialog("Start a new run?", "The current input and questions are cleared.", "Clear"))) return;
+  Object.assign(draft, { kind: "text", text: "", fields: '{\n  "text": ""\n}', image: null, questions: [], errors: {}, result: null, focus: null });
+  if ((location.hash || "#/run").startsWith("#/run")) route(); else location.hash = "#/run";
 }
 
 // History → "Open in editor": load a saved run into the Run view (nothing is sent).
@@ -582,6 +590,7 @@ export function renderResult(run, questions, { onPresence } = {}) {
 }
 
 // ---------- boot ----------
+let experiments;
 async function boot() {
   try {
     [app.status, app.prefs] = await Promise.all([api("GET", "/api/status"), api("GET", "/api/prefs")]);
@@ -592,8 +601,15 @@ async function boot() {
   applyPrefs();
   showBanner();
   refreshTotals();
-  await Promise.all([import("./experiments.js"), import("./history.js")]);  // register their views; loaded after app.js so the import cycle is safe
+  [experiments] = await Promise.all([import("./experiments.js"), import("./history.js")]);  // register their views; loaded after app.js so the import cycle is safe
   addEventListener("hashchange", route);
+  // Chrome and Opera keep Ctrl+N for a new window and never pass it to the page, so Alt+N does the same.
+  addEventListener("keydown", e => {
+    if (e.shiftKey || e.ctrlKey === e.altKey || document.getElementById("dlg").open) return;  // ctrl+alt = AltGr typing
+    const k = e.key.toLowerCase();
+    if (k === "h" && e.ctrlKey) { e.preventDefault(); location.hash = "#/history"; }
+    else if (k === "n") { e.preventDefault(); location.hash.startsWith("#/experiments") ? experiments.newExperiment() : newRun(); }
+  });
   route();
 }
 boot();

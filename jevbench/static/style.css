@@ -202,6 +202,9 @@ table.grid thead th:has(details[open]) { z-index: 4; } /* an open column menu mu
 td.cell { cursor: pointer; white-space: nowrap; background: color-mix(in oklab, var(--heat-hi) calc(var(--v, 0) * 100%), var(--heat-lo)); }
 td.cell .v { margin-right: 4px; }
 td.cell .tag { font-size: .65rem; padding: 0 4px; }
+/* colored marks sit on a surface chip: on the darkest heat they would drop to ~3:1 */
+td.cell .tag, td.cell .alt, td.cell .x { background: var(--surface); }
+td.cell .alt, td.cell .x { padding: 0 3px; border-radius: 3px; }
 td.cell .alt { margin-left: 4px; color: var(--review); font-weight: 600; }
 td.cell .lvl { display: block; max-width: 12em; overflow: hidden; text-overflow: ellipsis; }
 td.cell.empty, td.cell.failed { background: var(--surface); color: var(--muted); text-align: center; }

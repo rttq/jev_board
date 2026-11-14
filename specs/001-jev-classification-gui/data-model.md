@@ -107,7 +107,7 @@ The whole experiment is read and written as one JSON document. That is fine for 
 - Row and column keys are unique and never reused.
 - Labels: Noul `"yes" | "no"`. Choice is one of the option keys. Score is a level index `0…N-1`. Otherwise `null`. Invalid values are rejected at import with per-row errors.
 - Duplicate `input_hash` among rows, or duplicate `question_hash` among columns, triggers a warning and is merged on confirm.
-- Question validation (all types): non-empty `instructions`; Choice ≥ 2 options; Score ≥ 2 levels; Box requires an image and a model other than `jev-1.13.*`. Image: PNG/JPEG magic bytes, ≤ 20 MiB.
+- Question validation (all types): non-empty `instructions`; Choice ≥ 2 options; Score ≥ 2 levels; Box requires an image and a model other than `jev-1.13.*`. Image: PNG/JPEG magic bytes, ≤ 16 MiB decoded, each side 280–1568 px (docs.typesafe.ai/images; the API never resizes). The Run view scales larger images down on attach. Requests with an image send `TypeSafe-Danger-Zone-Images: true`.
 
 ## Derived (computed in the browser, `static/metrics.js`)
 

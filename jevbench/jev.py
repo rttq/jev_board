@@ -17,13 +17,15 @@ import base64
 import hashlib
 import json
 import re
+import struct
 import time
 
 import typesafe_sdk as ts
 
 TYPES = ("noul", "choice", "score", "box")
 ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
-MAX_IMAGE = 20 * 1024 * 1024
+MAX_IMAGE = 16 * 1024 * 1024  # docs.typesafe.ai/images: 16 MiB per file, each side 280-1568 px
+MIN_SIDE, MAX_SIDE = 280, 1568
 
 
 def canon_hash(obj) -> str:
@@ -90,12 +92,41 @@ def validate_image(b64: str):
     except Exception:
         raise ValueError("image is not valid base64")
     if len(data) > MAX_IMAGE:
-        raise ValueError("image is larger than 20 MiB")
+        raise ValueError("image is larger than 16 MiB")
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return data, "png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return data, "jpg"
-    raise ValueError("image must be PNG or JPEG")
+        ext = "png"
+    elif data.startswith(b"\xff\xd8\xff"):
+        ext = "jpg"
+    else:
+        raise ValueError("image must be PNG or JPEG")
+    size = image_size(data, ext)
+    if size is None:
+        raise ValueError("cannot read the image size; the file may be damaged")
+    w, h = size
+    if not (MIN_SIDE <= w <= MAX_SIDE and MIN_SIDE <= h <= MAX_SIDE):
+        raise ValueError(f"image is {w} x {h} px; Jev needs each side between {MIN_SIDE} and {MAX_SIDE} px")
+    return data, ext
+
+
+def image_size(data: bytes, ext: str):
+    """(width, height) from the PNG IHDR or the first JPEG frame header, or None."""
+    if ext == "png":
+        return struct.unpack(">II", data[16:24]) if data[12:16] == b"IHDR" else None
+    i = 2
+    while i + 9 <= len(data):
+        if data[i] != 0xFF:
+            return None
+        m = data[i + 1]
+        if m == 0xFF:  # fill byte
+            i += 1
+        elif 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):  # SOFn: length, precision, height, width
+            h, w = struct.unpack(">HH", data[i + 5:i + 9])
+            return w, h
+        elif m == 0x01 or 0xD0 <= m <= 0xD9:  # markers without a length
+            i += 2
+        else:
+            i += 2 + struct.unpack(">H", data[i + 2:i + 4])[0]
+    return None
 
 
 def build_state(inp: dict, image_bytes: bytes | None):

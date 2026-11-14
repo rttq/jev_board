@@ -358,6 +358,18 @@ function placeholderFor(type) {
            score: `How sweet does ${ref} say it is?`, box: "the apple in `image`" }[type];
 }
 
+// Jev rejects any side over 1568 px (and never resizes), so shrink big photos here; small ones get the server's message.
+async function fitImage(dataUrl, type) {
+  const img = new Image(); img.src = dataUrl;
+  try { await img.decode(); } catch { return dataUrl; }
+  const k = 1568 / Math.max(img.naturalWidth, img.naturalHeight);
+  if (k >= 1) return dataUrl;
+  const c = document.createElement("canvas");
+  c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  return type === "image/png" ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", 0.92);
+}
+
 function inputPanel(rerender) {
   const seg = h("div", { class: "seg", role: "group", "aria-label": "Input kind" },
     ["text", "json"].map(k => h("button", { type: "button", "aria-pressed": String(draft.kind === k),
@@ -373,7 +385,10 @@ function inputPanel(rerender) {
     onchange: e => {
       const f = e.target.files[0]; if (!f) return;
       const r = new FileReader();
-      r.onload = () => { draft.image = { b64: String(r.result).split(",")[1], url: r.result, name: f.name }; rerender(); };
+      r.onload = async () => {
+        const url = await fitImage(String(r.result), f.type);
+        draft.image = { b64: url.split(",")[1], url, name: f.name }; rerender();
+      };
       r.readAsDataURL(f);
     } });
   return h("section", { class: "panel stack", "aria-label": "Input" },

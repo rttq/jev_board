@@ -29,7 +29,15 @@ CANNED = {
               "probabilities": {"0": 0.0, "1": 0.57, "2": 0.43}},
     "box": {"type": "box", "box": {"top": 0.25, "bottom": 0.82, "left": 0.44, "right": 0.84}, "confidence": 0.92},
 }
-PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+def png_header(w, h):  # enough of a PNG for validation: signature + IHDR with the size
+    return b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\x0dIHDR" + w.to_bytes(4, "big") + h.to_bytes(4, "big") + b"\x08\x02\x00\x00\x00"
+
+
+def jpeg_header(w, h):  # SOI, an APP0 segment, then SOF0 with the size
+    return b"\xff\xd8" + b"\xff\xe0\x00\x04ab" + b"\xff\xc0\x00\x11\x08" + h.to_bytes(2, "big") + w.to_bytes(2, "big") + b"\x03" + b"\x00" * 9
+
+
+PNG = png_header(400, 300)
 
 
 def _request_json(req) -> dict:
@@ -117,7 +125,13 @@ class TestFoundation(Base):
 
     def test_validate_image(self):
         self.assertEqual(jev.validate_image(base64.b64encode(PNG).decode())[1], "png")
-        self.assertEqual(jev.validate_image(base64.b64encode(b"\xff\xd8\xff\xe0rest").decode())[1], "jpg")
+        self.assertEqual(jev.validate_image(base64.b64encode(jpeg_header(1568, 280)).decode())[1], "jpg")
+        b64 = lambda b: base64.b64encode(b).decode()
+        for bad in (png_header(279, 400), png_header(400, 1569), jpeg_header(4032, 3024)):
+            with self.assertRaisesRegex(ValueError, "between 280 and 1568"):
+                jev.validate_image(b64(bad))
+        with self.assertRaisesRegex(ValueError, "cannot read the image size"):
+            jev.validate_image(b64(b"\xff\xd8\xff\xe0rest"))
         with self.assertRaises(ValueError):
             jev.validate_image(base64.b64encode(b"GIF89a....").decode())
         with self.assertRaises(ValueError):

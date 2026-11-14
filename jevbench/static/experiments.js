@@ -413,7 +413,7 @@ function cellText(x, rv) {
   }
   const extra = S.exp.type === "choice" && !x.won ? h("span", { class: "alt", title: `Jev chose ${x.choice}` }, `↯${x.choice}`)
     : S.exp.type === "score" ? h("span", { class: "muted tiny lvl", title: S.exp.criteria[x.level] }, `“${S.exp.criteria[x.level]}”`) : null;
-  return [h("span", { class: "v" }, fmtProb(x.v)), h("span", { class: `tag tag-${x.band}` }, TAG[x.band]), missMark(x.miss), extra];
+  return [h("span", { class: "v" }, fmtProb(x.v)), h("span", { class: `tag tag-${x.band}`, role: "img", "aria-label": `band ${x.band}` }, TAG[x.band]), missMark(x.miss), extra];
 }
 
 const missMark = miss => miss && h("span", { class: "x", title: "Disagrees with the label", role: "img", "aria-label": "misclassified" }, "✕");

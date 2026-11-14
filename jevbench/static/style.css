@@ -57,6 +57,9 @@ a { color: var(--accent); }
   padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--surface);
 }
 .brand { font-weight: 650; color: var(--text); text-decoration: none; }
+.offline { margin-left: auto; color: var(--no); background: var(--err-bg); font-size: .85rem; font-weight: 600; padding: 2px 8px; border-radius: var(--radius); }
+.offline[hidden] { display: none; }
+.offline:not([hidden]) + .totals { margin-left: 0; }
 .top nav { display: flex; gap: 4px; flex-wrap: wrap; }
 .top nav a { padding: 4px 10px; border-radius: var(--radius); color: var(--muted); text-decoration: none; }
 .top nav a[aria-current="page"] { background: var(--track); color: var(--text); }

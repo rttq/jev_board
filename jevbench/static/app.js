@@ -25,12 +25,20 @@ export async function api(method, path, body) {
       body: body ? JSON.stringify(body) : undefined,
     });
   } catch {
+    setOffline(true);
     throw { status: 0, error: "Cannot reach the jevbench server. Is it still running in the terminal?" };
   }
+  setOffline(false);
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (method === "POST" && path === "/api/runs") refreshTotalsSoon();  // every caller that spends money
   if (!res.ok) throw { status: res.status, ...(data || { error: res.statusText }) };
   return data;
+}
+
+// Header badge while the server is unreachable; the next successful request clears it.
+function setOffline(on) {
+  const el = document.getElementById("offline");
+  if (el) el.hidden = !on;
 }
 
 // ---------- header totals ----------
@@ -122,7 +130,10 @@ function route() {
   }
   const view = document.getElementById("view");
   view.replaceChildren();
-  (views[name] || notBuilt)(view, rest);
+  // A view whose first load fails shows why instead of a blank page; views already on screen keep working.
+  Promise.resolve((views[name] || notBuilt)(view, rest)).catch(err => {
+    view.append(h("div", { class: "result error", role: "alert" }, err?.error || String(err)));
+  });
 }
 
 function notBuilt(view) {

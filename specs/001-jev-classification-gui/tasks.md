@@ -213,7 +213,7 @@ Single Python package at repo root: `jevbench/` (server + `jevbench/static/` pag
 ## Phase 12: Polish & Cross-Cutting Concerns
 
 - [X] T069 Keyboard and accessibility pass in `jevbench/static/app.js` and `jevbench/static/style.css`: arrow-key cell navigation in the grid with roving tabindex, Enter opens the cell panel; global `Ctrl+N` (new run or experiment, depending on view) and `Ctrl+H` (History); `aria-label`s on icon-only buttons and band tags; contrast check of light and dark tokens (≥ 4.5:1 for text)
-- [ ] T070 Offline handling in `jevbench/static/app.js`: a network failure on `/api/runs` shows "offline / cannot reach server" without breaking the view; the guide, History and dashboard analysis keep working
+- [X] T070 Offline handling in `jevbench/static/app.js`: a network failure on `/api/runs` shows "offline / cannot reach server" without breaking the view; the guide, History and dashboard analysis keep working
 - [ ] T071 [P] Write a short `README.md` at repo root: what it is, the 3-line launch from quickstart.md, where data lives, and the two test commands
 - [ ] T072 Final verification: run `uv run python -m unittest discover -s tests`, `node --test "tests/*.test.mjs"`, and the live smoke `JEVBENCH_LIVE=1 uv run python -m unittest tests.test_core.LiveSmoke`. Then, with the Playwright MCP tools, re-run the US1, US4 and US6 browser checks on a fresh `.checks/data` and add quickstart step 9 (attach a small PNG, Box, assert an SVG rect is visible inside the image bounds, click "Add presence check" and assert a Noul was added). Fix any failure; summarize `.checks/REPORT.md` in the PR description
 

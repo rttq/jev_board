@@ -724,6 +724,22 @@ class TestLibrary(Base):
                 self.assertFalse(out["ok"])
                 self.assertIn(msg, out["error"]["message"])
 
+    def test_format_doc_examples_load_cleanly(self):
+        """docs/json-format.md is pasted into AI prompts; its examples must pass the real checks."""
+        doc = (Path(__file__).resolve().parent.parent / "docs" / "json-format.md").read_text(encoding="utf-8")
+        blocks = dict(re.findall(r"```json (inputs|questions)\n(.*?)```", doc, re.S))
+        self.assertEqual(set(blocks), {"inputs", "questions"})
+        for kind, text in blocks.items():
+            with self.subTest(kind=kind):
+                self.write(kind, "doc.json", text)
+                out = self.an(kind, "doc.json")
+                self.assertTrue(out["ok"], out["error"])
+                self.assertEqual(out["warnings"], [])
+                if kind == "questions":
+                    self.assertTrue(all(q["valid"] for q in out["questions"].values()))
+                else:
+                    self.assertTrue(all(f["count"] == len(out["inputs"]["records"]) for f in out["inputs"]["fields"]))
+
     # --- US5: the SC-003 set (with the files above, well over 20) ---
     def test_reading_rules(self):
         deep = '{"a": ' * 100_000 + "1" + "}" * 100_000

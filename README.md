@@ -48,6 +48,7 @@ In an experiment only questions with its type and criteria become variants; the 
 }
 ```
 
+The full rules, ready to paste into a prompt when an AI writes these files, are in [docs/json-format.md](docs/json-format.md).
 Files must be UTF-8 (with or without BOM). Syntax errors show their line and column; duplicate keys and
 integers beyond 2^53 (which the browser rounds) are flagged as warnings.
 

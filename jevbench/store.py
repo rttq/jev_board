@@ -85,7 +85,7 @@ def now() -> str:
 
 
 def _connect(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, check_same_thread=False)
+    conn = sqlite3.connect(path)
     try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
@@ -100,12 +100,39 @@ def _connect(path: Path) -> sqlite3.Connection:
         raise
 
 
-def open_db(data_dir) -> tuple[sqlite3.Connection, str | None]:
+class ThreadConn:
+    """One sqlite connection per thread, behind the single `conn` every function takes.
+    The server handles requests on parallel threads, and a shared sqlite3 connection fails under concurrent
+    reads ("bad parameter or other API misuse"). Writes stay serialized by LOCK."""
+
+    def __init__(self, path: Path, first: sqlite3.Connection):
+        self.path, self.local = path, threading.local()
+        self.local.c = first  # the opening thread reuses the connection that created and checked the schema
+
+    def _c(self) -> sqlite3.Connection:
+        c = getattr(self.local, "c", None)
+        if c is None:
+            c = self.local.c = sqlite3.connect(self.path)
+            c.row_factory = sqlite3.Row
+            c.execute("PRAGMA foreign_keys=ON")
+        return c
+
+    def __getattr__(self, name):
+        return getattr(self._c(), name)
+
+    def __enter__(self):  # `with conn:` transactions (dunder methods bypass __getattr__)
+        return self._c().__enter__()
+
+    def __exit__(self, *exc):
+        return self._c().__exit__(*exc)
+
+
+def open_db(data_dir) -> tuple["ThreadConn", str | None]:
     data_dir = Path(data_dir)
     (data_dir / "images").mkdir(parents=True, exist_ok=True)
     path = data_dir / "jevbench.db"
     try:
-        return _connect(path), None
+        return ThreadConn(path, _connect(path)), None
     except sqlite3.DatabaseError as e:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         broken = path.with_name(f"jevbench.db.broken-{stamp}")
@@ -114,7 +141,7 @@ def open_db(data_dir) -> tuple[sqlite3.Connection, str | None]:
             if p.exists():
                 os.replace(p, Path(str(broken) + suffix))
         notice = f"The data file could not be read ({e}). It was moved to {broken.name} and a fresh one was started."
-        return _connect(path), notice
+        return ThreadConn(path, _connect(path)), notice
 
 
 # ---------- prefs ----------
@@ -418,6 +445,47 @@ def _save(conn, exp_id, exp, created=False) -> int:
 def create_experiment(conn, body) -> tuple[int, list[str]]:
     exp, warnings = _normalize(body or {})
     return _save(conn, None, exp, created=True), warnings
+
+
+def experiment_from_runs(conn, name, type_, run_ids=None, filters=None) -> tuple[int, list[str], dict]:
+    """Rows = distinct inputs (first seen first); columns = distinct wordings of `type_` sharing its most common
+    criteria. Cells then fill from the existing answers by hash. Never calls Jev."""
+    if type_ not in EXP_TYPES:
+        raise ExpError(400, "type must be noul, choice or score")
+    f = {"ids": run_ids} if run_ids else dict(filters or {})
+    runs = [r for r in reversed(list_runs(conn, {**f, "status": "ok"}, limit=None)["runs"])]  # oldest first
+    skipped = {"other_types": 0, "other_criteria": 0, "with_image": 0}
+    qs = []  # (run, criteria key, criteria, instructions)
+    for r in runs:
+        for q in r["questions"].values():
+            if q.get("type") != type_:
+                skipped["other_types"] += 1
+            elif r["image_sha"]:
+                skipped["with_image"] += 1  # experiment rows carry no image, so these cells could never match
+            else:
+                qs.append((r, json.dumps(q.get("criteria"), sort_keys=True), q.get("criteria"), q["instructions"]))
+    if not qs:
+        raise ExpError(400, f"The selection has no {type_} questions to build a matrix from.")
+    counts = {}
+    for _, key, _, _ in qs:
+        counts[key] = counts.get(key, 0) + 1
+    best = max(counts, key=counts.get)  # ties: the first seen (dicts keep insertion order)
+    rows, cols, seen_in, seen_q = [], [], set(), set()
+    for r, key, crit, instr in qs:
+        if key != best:
+            skipped["other_criteria"] += 1
+            continue
+        if r["input_hash"] not in seen_in:
+            seen_in.add(r["input_hash"]); rows.append({"input": r["input"]})
+        ik = json.dumps(instr, sort_keys=True)
+        if ik not in seen_q:
+            seen_q.add(ik); cols.append({"instructions": instr})
+    criteria = json.loads(best)
+    exp_id, warnings = create_experiment(conn, {"name": name, "type": type_, "criteria": criteria, "rows": rows, "columns": cols})
+    notes = {"other_types": "of other types", "other_criteria": f"of type {type_} with different criteria",
+             "with_image": "with an image"}
+    warnings += [f"{n} question{'s' if n != 1 else ''} {notes[k]} left out." for k, n in skipped.items() if n]
+    return exp_id, warnings, skipped
 
 
 def get_experiment(conn, exp_id) -> dict | None:

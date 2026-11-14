@@ -220,7 +220,9 @@ class TestRunFlow(Base):
 
     def test_totals_session_all_time_and_unknown(self):
         ctx = self.ctx()
-        self.post_run(FakeJev(), {"input": APPLE, "questions": {"q1": NOUL}})  # before this session
+        _, old = self.post_run(FakeJev(), {"input": APPLE, "questions": {"q1": NOUL}})  # before this session
+        # Windows clocks tick in ~1-15 ms steps, so "now" can equal the run's timestamp; make it unambiguously older
+        self.conn.execute("UPDATE runs SET created_at = '2000-01-01T00:00:00.000000Z' WHERE id = ?", (old["id"],))
         ctx["started_at"] = store.now()
         _, a = self.post_run(FakeJev(), {"input": APPLE, "questions": {"q1": NOUL}})
         _, b = self.post_run(FakeJev(input_tokens=None), {"input": APPLE, "questions": {"q1": NOUL}})
@@ -435,6 +437,70 @@ class TestHistory(Base):
         self.assertEqual([x["id"] for x in lines], [self.r3["id"], self.r2["id"], self.r1["id"]])
         for x in lines:
             self.assertEqual(x, store.get_run(self.conn, x["id"]))
+
+
+class TestConcurrency(Base):
+    def test_parallel_requests_share_the_db_safely(self):
+        """The server runs requests on parallel threads (a matrix run sends `concurrency` rows at once).
+        A single shared sqlite connection failed here with 'bad parameter or other API misuse'."""
+        from concurrent.futures import ThreadPoolExecutor
+        fake = FakeJev()
+        st, e = server.dispatch(self.ctx(fake), "POST", "/api/experiments", {},
+                                {"name": "p", "type": "noul", "rows": [], "columns": []})
+        eid = e["experiment"]["id"]
+
+        def work(i):
+            st, run = self.post_run(fake, {"input": {"kind": "text", "text": f"t{i}"}, "questions": {"q": NOUL}, "experiment_id": eid})
+            assert st == 200 and run["status"] == "ok", run
+            for path in (f"/api/experiments/{eid}", "/api/runs", "/api/totals", "/api/prefs"):
+                st, out = server.dispatch(self.ctx(fake), "GET", path, {}, None)
+                assert st == 200, (path, out)
+            return run["id"]
+
+        with ThreadPoolExecutor(8) as pool:
+            ids = list(pool.map(work, range(64)))
+        self.assertEqual(len(set(ids)), 64)
+        self.assertEqual(self.run_count(), 64)
+
+
+class TestFromRuns(Base):
+    WORDINGS = ["Is `text` an apple?", "Does `text` describe an apple?", "Apple (the fruit)?"]
+    PEAR = {"kind": "text", "text": "A soft green pear"}
+
+    def setUp(self):
+        super().setUp()
+        self.fake = FakeJev()
+        self.ids = [self.post_run(self.fake, {"input": inp, "questions": {"q": {"type": "noul", "instructions": w}}})[1]["id"]
+                    for inp in (APPLE, self.PEAR) for w in self.WORDINGS]
+        self.extra = [self.post_run(self.fake, {"input": APPLE, "questions": {"c": CHOICE}})[1]["id"],
+                      self.post_run(self.fake, {"input": APPLE, "questions": {"n": {**NOUL, "criteria": {"true": "a real apple"}}}})[1]["id"]]
+
+    def make(self, **body):
+        return server.dispatch(self.ctx(self.fake), "POST", "/api/experiments/from-runs", {}, {"name": "from history", "type": "noul", **body})
+
+    def test_six_runs_make_a_full_2x3_matrix_without_calling_jev(self):
+        calls = self.fake.calls
+        st, out = self.make(run_ids=self.ids)
+        self.assertEqual(st, 200, out)
+        e = out["experiment"]
+        self.assertEqual([r["input"]["text"] for r in e["rows"]], [APPLE["text"], self.PEAR["text"]])
+        self.assertEqual([c["instructions"] for c in e["columns"]], self.WORDINGS)
+        self.assertEqual({r: sorted(cols) for r, cols in out["cells"].items()}, {"r1": ["c1", "c2", "c3"], "r2": ["c1", "c2", "c3"]})
+        self.assertEqual(self.fake.calls, calls)
+        self.assertEqual(out["skipped"], {"other_types": 0, "other_criteria": 0, "with_image": 0})
+        plan = server.dispatch(self.ctx(self.fake), "GET", f"/api/experiments/{e['id']}/plan", {"model": ["jev-1.14.0"]}, None)[1]
+        self.assertEqual(plan["requests"], [])
+
+    def test_mixed_types_and_criteria_are_counted_as_skipped(self):
+        st, out = self.make(filter={"model": "jev-1.14.0"})
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["skipped"], {"other_types": 1, "other_criteria": 1, "with_image": 0})
+        self.assertEqual(len(out["experiment"]["columns"]), 3)
+        self.assertTrue(any("other types" in w for w in out["warnings"]))
+        st, out = self.make(name="choice one", type="choice", run_ids=self.extra)
+        self.assertEqual((st, len(out["experiment"]["rows"]), out["skipped"]["other_types"]), (200, 1, 1))
+        self.assertEqual(self.make(name="score", type="score", run_ids=self.ids)[0], 400)  # nothing to build from
+        self.assertEqual(self.make(run_ids=self.ids)[0], 409)  # "from history" exists already
 
 
 class TestNoulCriteria(unittest.TestCase):

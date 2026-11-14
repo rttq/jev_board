@@ -65,6 +65,8 @@ function drawList() {
       total > PAGE && h("button", { type: "button", disabled: H.offset === 0, onclick: () => { H.offset -= PAGE; load(); } }, "‹ Newer"),
       total > PAGE && h("button", { type: "button", disabled: H.offset + PAGE >= total, onclick: () => { H.offset += PAGE; load(); } }, "Older ›"),
       h("span", { style: "flex:1" }),
+      h("button", { type: "button", disabled: !total && !H.selected.size, title: "Build an experiment from these runs' answers. No requests are sent.",
+                    onclick: openAsMatrix }, `Open ${H.selected.size ? "selected" : "these"} as matrix`),
       h("span", { class: "muted small" }, `Export ${scope}:`), exportBtn("csv"), exportBtn("jsonl"),
       H.selected.size > 0 && h("button", { class: "link", type: "button", onclick: () => { H.selected.clear(); drawList(); } }, "Clear selection")),
     runs.length ? h("div", { class: "hist-scroll" }, h("table", { class: "list hist" },
@@ -85,6 +87,41 @@ function drawList() {
         h("td", { class: "num small" }, r.status === "error" ? "—" : fmtUSD(r.cost_usd)),
         h("td", { class: "small" }, r.tags.join(", ")))))))
     : h("p", { class: "muted panel" }, Object.keys(H.filters).length ? "No runs match these filters." : "No runs yet. Make one in Run or Experiments.")));
+}
+
+// History → matrix: rows = distinct inputs, columns = distinct wordings of one type. Cells fill from saved answers.
+async function openAsMatrix() {
+  const scope = H.selected.size ? { run_ids: [...H.selected] } : { filter: H.filters };
+  const q = H.selected.size ? query({ ids: [...H.selected].join(","), status: "ok", limit: 500 }) : query({ status: "ok", limit: 500 });
+  const { runs } = await api("GET", "/api/runs?" + q);  // ponytail: counts from the first 500; the server uses all
+  const counts = {};
+  for (const r of runs) for (const qq of Object.values(r.questions)) if (qq.type !== "box") counts[qq.type] = (counts[qq.type] || 0) + 1;
+  const dlg = document.getElementById("dlg");
+  const typesHere = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
+  if (!typesHere.length) {
+    dlg.replaceChildren(h("h1", {}, "Nothing to build"), h("p", {}, "These runs have no successful Noul, Choice or Score answers."),
+      h("div", { class: "actions" }, h("span", { style: "flex:1" }), h("button", { type: "button", onclick: () => dlg.close() }, "Close")));
+    return dlg.showModal();
+  }
+  const name = h("input", { value: `From history ${new Date().toLocaleString()}`, "aria-label": "Experiment name", style: "width:100%" });
+  const type = h("select", { "aria-label": "Question type" },
+    typesHere.map(t => h("option", { value: t }, `${TYPE_LABEL[t]} (${counts[t]} question${counts[t] === 1 ? "" : "s"})`)));
+  const err = h("p", { class: "err-text", role: "alert" });
+  dlg.replaceChildren(h("h1", {}, "Open as matrix"),
+    h("p", { class: "small muted" }, "Rows are the distinct inputs. Columns are the distinct wordings of one type that share the same criteria. ",
+      "Cells come from answers you already have; nothing is sent to Jev."),
+    h("label", { class: "small" }, "Name"), name,
+    h("label", { class: "small", style: "display:block;margin-top:8px" }, "Type"), type, err,
+    h("div", { class: "actions" }, h("span", { style: "flex:1" }),
+      h("button", { type: "button", onclick: () => dlg.close() }, "Cancel"),
+      h("button", { type: "button", class: "primary", onclick: async () => {
+        try {
+          const out = await api("POST", "/api/experiments/from-runs", { name: name.value, type: type.value, ...scope });
+          app.flash = out.warnings;  // shown once by the experiment page
+          dlg.close(); location.hash = `#/experiments/${out.experiment.id}`;
+        } catch (e) { err.textContent = e.error; }
+      } }, "Create")));
+  dlg.showModal();
 }
 
 function drawDetail() {
@@ -135,7 +172,7 @@ async function renderHistory(view) {
   const ids = new URLSearchParams(location.hash.split("?")[1] || "").get("ids");
   if (ids) { H.filters = { ids }; H.offset = 0; H.current = Number(ids.split(",")[0]); }
   else if (H.filters.ids) { H.filters = {}; H.offset = 0; }  // the nav link means "all runs"; other filters are kept
-  if (!H.exps) H.exps = await api("GET", "/api/experiments").catch(() => []);
+  H.exps = await api("GET", "/api/experiments").catch(() => []);  // fresh each visit: experiments come and go
   H.page = { total: 0, runs: [] };
   draw();
   await load();

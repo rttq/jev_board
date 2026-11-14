@@ -177,6 +177,18 @@ def h_create_exp(ctx, params, query, body):
     return _full(ctx, exp_id, warnings)
 
 
+def h_exp_from_runs(ctx, params, query, body):
+    body = body or {}
+    filters = {k: v for k, v in (body.get("filter") or {}).items() if k in RUN_FILTERS and v not in ("", None)}
+    try:
+        exp_id, warnings, skipped = _exp_call(store.experiment_from_runs, ctx["conn"], str(body.get("name") or "").strip(),
+                                              body.get("type"), body.get("run_ids"), filters)
+    except (ValueError, TypeError):
+        raise ApiError(400, "run_ids and experiment_id must be numbers")
+    st, out = _full(ctx, exp_id, warnings)
+    return st, {**out, "skipped": skipped}
+
+
 def h_get_exp(ctx, params, query, body):
     return _full(ctx, params[0])
 
@@ -217,6 +229,7 @@ ROUTES = [
     ("GET", r"/api/export", h_export),
     ("GET", r"/api/experiments", h_list_exps),
     ("POST", r"/api/experiments", h_create_exp),
+    ("POST", r"/api/experiments/from-runs", h_exp_from_runs),
     ("GET", r"/api/experiments/(\d+)", h_get_exp),
     ("PUT", r"/api/experiments/(\d+)", h_put_exp),
     ("DELETE", r"/api/experiments/(\d+)", h_delete_exp),

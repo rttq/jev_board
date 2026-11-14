@@ -53,8 +53,9 @@ async function load(id) {
   const d = await api("GET", `/api/experiments/${id}`);
   S = { id, exp: d.experiment, cells: d.cells, run_costs: d.run_costs, models: d.models, cost: d.cost,
         rowErrors: {}, running: null, runModel: app.prefs.default_model, plan: null, selected: null, limit: 200,
-        setupErr: null, setupMsg: d.warnings?.join(" ") || null, newRows: "", newCol: "", hideAfter: null };
+        setupErr: null, setupMsg: [...(app.flash || []), ...(d.warnings || [])].join(" ") || null, openSetup: !!app.flash?.length, newRows: "", newCol: "", hideAfter: null };
   S.exp.view = { ...clone(DEFAULT_VIEW), ...S.exp.view };
+  app.flash = null;
   S.crit = critToEditor(S.exp.type, S.exp.criteria);
 }
 

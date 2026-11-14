@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS experiments (
   name TEXT NOT NULL UNIQUE,
   type TEXT NOT NULL,
   criteria TEXT,
+  reference TEXT,
   rows TEXT NOT NULL DEFAULT '[]',
   columns TEXT NOT NULL DEFAULT '[]',
   view TEXT NOT NULL DEFAULT '{}',
@@ -88,6 +89,8 @@ def _connect(path: Path) -> sqlite3.Connection:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
+        if "reference" not in {r[1] for r in conn.execute("PRAGMA table_info(experiments)")}:  # pre-reference DBs
+            conn.execute("ALTER TABLE experiments ADD COLUMN reference TEXT")
         conn.execute("SELECT count(*) FROM runs").fetchone()
         return conn
     except sqlite3.DatabaseError:
@@ -247,7 +250,8 @@ def _normalize(body: dict, old: dict | None = None) -> tuple[dict, list[str]]:
     errs = jev.validate_questions({"x": probe}, False, "jev-latest")
     if errs:
         raise ExpError(400, errs[0]["error"])
-    exp = {"type": t, "criteria": criteria, "name": name}
+    ref = str(body.get("reference", old.get("reference")) or "").strip() or None
+    exp = {"type": t, "criteria": criteria, "name": name, "reference": ref}
     warnings, row_errs, rows, seen = [], [], [], set()
     for i, r in enumerate(body.get("rows", old.get("rows", []))):
         inp = r.get("input")
@@ -263,7 +267,7 @@ def _normalize(body: dict, old: dict | None = None) -> tuple[dict, list[str]]:
         if not _label_ok(t, criteria, r.get("label")):
             row_errs.append({"index": i, "error": f"label {r.get('label')!r} is not valid for {t}"})
             continue
-        h = jev.input_hash(inp, None)
+        h = jev.input_hash(jev.with_reference(inp, ref), None)  # the reference is part of what Jev sees
         if h in seen:
             warnings.append(f"row {i + 1} repeats an earlier input and was merged")
             continue
@@ -303,16 +307,16 @@ def _exp_dict(row) -> dict:
 
 
 def _save(conn, exp_id, exp, created=False) -> int:
-    vals = (exp["name"], exp["type"], json.dumps(exp["criteria"]), json.dumps(exp["rows"]), json.dumps(exp["columns"]),
-            json.dumps(exp["view"]), json.dumps(exp["views"]))
+    vals = (exp["name"], exp["type"], json.dumps(exp["criteria"]), exp.get("reference"), json.dumps(exp["rows"]),
+            json.dumps(exp["columns"]), json.dumps(exp["view"]), json.dumps(exp["views"]))
     try:
         with LOCK, conn:
             if created:
                 t = now()
-                return conn.execute("INSERT INTO experiments(name, type, criteria, rows, columns, view, views, created_at,"
-                                    " updated_at) VALUES (?,?,?,?,?,?,?,?,?)", vals + (t, t)).lastrowid
-            conn.execute("UPDATE experiments SET name=?, type=?, criteria=?, rows=?, columns=?, view=?, views=?, updated_at=?"
-                         " WHERE id=?", vals + (now(), exp_id))
+                return conn.execute("INSERT INTO experiments(name, type, criteria, reference, rows, columns, view, views,"
+                                    " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)", vals + (t, t)).lastrowid
+            conn.execute("UPDATE experiments SET name=?, type=?, criteria=?, reference=?, rows=?, columns=?, view=?, views=?,"
+                         " updated_at=? WHERE id=?", vals + (now(), exp_id))
             return exp_id
     except sqlite3.IntegrityError:
         raise ExpError(409, f"an experiment named {exp['name']!r} already exists")
@@ -432,7 +436,7 @@ def experiment_plan(conn, exp, model, price) -> dict:
         missing = [c for c in visible if resolved not in cells.get(r["key"], {}).get(c["key"], {})]
         if missing:
             requests.append({"row": r["key"], "columns": [c["key"] for c in missing]})
-            chars += len(json.dumps(r["input"])) + len(json.dumps({c["key"]: _wire(exp, c) for c in missing}))
+            chars += len(json.dumps(jev.with_reference(r["input"], exp.get("reference")))) +len(json.dumps({c["key"]: _wire(exp, c) for c in missing}))
     avg = conn.execute("SELECT avg(input_tokens) FROM runs WHERE experiment_id = ? AND status = 'ok'"
                        " AND input_tokens IS NOT NULL", (exp["id"],)).fetchone()[0]
     tokens = round(avg * len(requests)) if avg else -(-chars // 4)

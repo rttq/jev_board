@@ -410,7 +410,7 @@ const renderers = {
         h("div", { class: "axis" }),
         probs.map(([i]) => h("div", { class: "tick", style: `left:${(i / (n - 1)) * 100}%` })),
         probs.map(([i]) => h("div", { class: "tick-lbl" + (i === 0 ? " first" : i === n - 1 ? " last" : ""),
-                                      style: `left:${(i / (n - 1)) * 100}%`, title: a.legend[i] }, a.legend[i])),
+                                      style: `left:${(i / (n - 1)) * 100}%`, title: a.legend[i] }, String(i))),
         h("div", { class: "marker", style: `left:${pos * 100}%` })),
       probs.map(([i, p]) => barLine(`${i} · ${a.legend[i]}`, p, i === Math.round(a.score))),
       split && h("p", { class: "hint" }, `Split answer: levels ${t1[0]} and ${t2[0]} both carry weight. The position alone hides this.`));

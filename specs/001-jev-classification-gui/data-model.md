@@ -70,6 +70,7 @@ PK `(run_id, question_id)`. Index `(input_hash, question_hash, model_used, creat
 | `name` | TEXT | unique |
 | `type` | TEXT | `noul` \| `choice` \| `score` (no Box in v1) |
 | `criteria` | TEXT (JSON) NULL | shared by all columns: Choice options map, Score levels array, optional Noul clarification |
+| `reference` | TEXT NULL | optional shared text sent with every row as the state field `reference` (a text row becomes `{"reference", "text"}`; a JSON row's own `reference` wins). It is part of each row's `input_hash`, so changing it starts fresh cells |
 | `rows` | TEXT (JSON) | `[Row]`, in display order |
 | `columns` | TEXT (JSON) | `[Column]`, in display order |
 | `view` | TEXT (JSON) | current `View` |

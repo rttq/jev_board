@@ -59,6 +59,9 @@ def h_post_run(ctx, params, query, body):
     if inp.get("kind") == "json" and not isinstance(inp.get("fields"), dict):
         raise ApiError(400, "fields must be a JSON object", "input.fields")
     inp = {"kind": "json", "fields": inp["fields"]} if inp.get("kind") == "json" else {"kind": "text", "text": str(inp.get("text", ""))}
+    exp = body.get("experiment_id") and store.get_experiment(ctx["conn"], int(body["experiment_id"]))
+    if exp:
+        inp = jev.with_reference(inp, exp.get("reference"))
     model = body.get("model") or store.get_prefs(ctx["conn"])["default_model"]
     questions = body.get("questions")
 

@@ -40,6 +40,14 @@ def input_hash(inp: dict, image_sha: str | None) -> str:
     return canon_hash(key)
 
 
+def with_reference(inp: dict, reference: str | None) -> dict:
+    """An experiment's shared reference rides along in state as `reference` (a row's own field wins)."""
+    if not reference:
+        return inp
+    fields = inp["fields"] if inp.get("kind") == "json" else {"text": inp.get("text", "")}
+    return {"kind": "json", "fields": {"reference": reference, **fields}}
+
+
 def question_hash(q: dict) -> str:
     return canon_hash({"type": q.get("type"), "instructions": q.get("instructions"), "criteria": q.get("criteria")})
 

@@ -52,7 +52,7 @@ class FakeJev:
         self.calls += 1
         if self.fail:
             return httpx2.Response(self.fail[0], json=self.fail[1])
-        body = _request_json(req)
+        body = self.last = _request_json(req)
         answers = {qid: CANNED[q["type"]] for qid, q in body["questions"].items()}
         return httpx2.Response(200, headers={"x-typesafe-request-id": "req_test"},
                                json={"model": self.model, "usage": {"input_tokens": self.input_tokens, "output_tokens": 4},
@@ -287,6 +287,23 @@ class TestExperiments(Base):
         self.assertEqual(plan["requests"], [{"row": "r1", "columns": ["c3"]}, {"row": "r2", "columns": ["c3"]}])
         self.assertEqual(plan["estimated_tokens"], 2 * 118)  # average of the experiment's real runs
         self.assertAlmostEqual(plan["estimated_cost_usd"], 236 * 0.042 / 1e6)
+
+    def test_shared_reference_is_sent_and_part_of_cell_identity(self):
+        fake = FakeJev()
+        e = self.exp(fake, reference="Apples are pome fruit.")["experiment"]
+        merged = {"kind": "json", "fields": {"reference": "Apples are pome fruit.", "text": APPLE["text"]}}
+        self.assertEqual(e["rows"][0]["input_hash"], jev.input_hash(merged, None))
+        self.post_run(fake, {"input": APPLE, "questions": {"c1": NOUL}, "experiment_id": e["id"]})
+        self.assertEqual(fake.last["state"], merged["fields"])
+        self.assertIn("c1", self.get(e["id"], fake)["cells"]["r1"])
+        # an ad-hoc run of the bare text is a different input; changing the reference starts fresh cells
+        self.post_run(fake, {"input": APPLE, "questions": {"c1": NOUL}})
+        st, out = server.dispatch(self.ctx(fake), "PUT", f"/api/experiments/{e['id']}", {}, {"reference": "Other."})
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["cells"], {})
+        st, out = server.dispatch(self.ctx(fake), "PUT", f"/api/experiments/{e['id']}", {}, {"reference": "  "})
+        self.assertIsNone(out["experiment"]["reference"])
+        self.assertIn("r1", out["cells"])  # back to bare text: the ad-hoc run fills r1 again
 
     def test_invalid_labels_give_per_row_errors(self):
         st, out = server.dispatch(self.ctx(), "POST", "/api/experiments", {},

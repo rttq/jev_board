@@ -220,6 +220,8 @@ function setupPanel() {
   const file = h("input", { type: "file", accept: ".txt,.csv,text/plain,text/csv", hidden: true,
                             onchange: ev => ev.target.files[0] && importFile(ev.target.files[0]) });
   const ref = e.rows[0]?.input.kind === "json" ? "`field`" : "`text`";
+  const refBox = h("textarea", { id: "exp-ref", rows: 3, value: e.reference || "",
+                                 placeholder: "e.g. a passage from a book or doc the inputs are judged against" });
   return h("details", { class: "panel setup", open: !e.rows.length || !e.columns.length || !!S.setupErr || S.openSetup,
                         ontoggle: ev => { S.openSetup = ev.target.open; } },
     h("summary", {}, h("strong", {}, "Setup"), h("span", { class: "muted small" }, " · name, type, shared criteria, inputs, variants")),
@@ -232,8 +234,11 @@ function setupPanel() {
           h("button", { class: "link", type: "button", onclick: async () => {
             const out = await api("POST", `/api/experiments/${S.id}/duplicate`); location.hash = `#/experiments/${out.experiment.id}`;
           } }, "Duplicate to change")),
+        h("label", { class: "small", for: "exp-ref" }, "Shared reference (optional)"),
+        refBox,
+        h("p", { class: "muted tiny" }, "Sent with every input as `reference`; point wordings at it. Changing it starts fresh cells."),
         h("button", { type: "button", onclick: () => {
-          const patch = { name: name.value };
+          const patch = { name: name.value, reference: refBox.value };
           if (!locked) { patch.type = type; patch.criteria = critFromEditor(type, S.crit); }
           S.pendingType = null; saveDoc(patch);
         } }, "Save question")),

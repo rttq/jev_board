@@ -1,5 +1,7 @@
 """SQLite storage: runs, answers, experiments, prefs."""
 
+import csv
+import io
 import json
 import os
 import sqlite3
@@ -192,6 +194,97 @@ def _run_dict(conn, row) -> dict:
 def get_run(conn, run_id: int) -> dict | None:
     row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
     return _run_dict(conn, row) if row else None
+
+
+def _run_where(f: dict) -> tuple[str, list]:
+    """Filters: type, model, status, tag, experiment_id, q, from, to (YYYY-MM-DD, inclusive), ids (list or "1,2")."""
+    w, a = [], []
+    if f.get("type"):  # the questions JSON as sent, so error runs (no answers) match too
+        w.append("questions LIKE ?"); a.append(f'%"type": "{f["type"]}"%')
+    if f.get("model"):
+        w.append("(model_used = ? OR model_requested = ?)"); a += [f["model"]] * 2
+    if f.get("status"):
+        w.append("status = ?"); a.append(f["status"])
+    if f.get("tag"):
+        w.append("(',' || tags || ',') LIKE ?"); a.append(f"%,{f['tag']},%")
+    if f.get("experiment_id"):
+        w.append("experiment_id = ?"); a.append(int(f["experiment_id"]))
+    if f.get("q"):  # stored JSON escapes non-ASCII, so match both the raw and the escaped spelling
+        forms = {f"%{f['q']}%", f"%{json.dumps(f['q'])[1:-1]}%"}
+        w.append("(" + " OR ".join(["input LIKE ? OR questions LIKE ? OR note LIKE ?"] * len(forms)) + ")")
+        a += [x for x in forms for _ in range(3)]
+    if f.get("from"):
+        w.append("created_at >= ?"); a.append(f["from"])
+    if f.get("to"):
+        w.append("created_at < date(?, '+1 day')"); a.append(f["to"])
+    if f.get("ids"):
+        ids = [int(i) for i in (f["ids"].split(",") if isinstance(f["ids"], str) else f["ids"]) if str(i).strip()]
+        w.append(f"id IN ({_in(len(ids)) or 'NULL'})"); a += ids
+    return (" WHERE " + " AND ".join(w)) if w else "", a
+
+
+def list_runs(conn, filters: dict, limit: int | None = 50, offset: int = 0) -> dict:
+    """Newest first. limit=None returns everything (export)."""
+    where, args = _run_where(filters or {})
+    total = conn.execute("SELECT count(*) FROM runs" + where, args).fetchone()[0]
+    page = "" if limit is None else f" LIMIT {min(500, max(1, int(limit)))} OFFSET {max(0, int(offset))}"
+    rows = conn.execute("SELECT * FROM runs" + where + " ORDER BY id DESC" + page, args).fetchall()
+    return {"total": total, "runs": [_run_dict(conn, r) for r in rows]}
+
+
+def patch_run(conn, run_id: int, body: dict) -> dict | None:
+    """Only note and tags can change; everything else about a run is a record of what was sent."""
+    sets, args = [], []
+    if "note" in body:
+        sets.append("note = ?"); args.append(str(body["note"] or ""))
+    if "tags" in body:
+        tags = body["tags"] if isinstance(body["tags"], list) else str(body["tags"] or "").split(",")
+        sets.append("tags = ?"); args.append(",".join(t.strip().replace(",", " ") for t in map(str, tags) if t.strip()))
+    if sets:
+        with LOCK, conn:
+            conn.execute(f"UPDATE runs SET {', '.join(sets)} WHERE id = ?", args + [run_id])
+    return get_run(conn, run_id)
+
+
+def delete_run(conn, run_id: int) -> bool:
+    with LOCK, conn:  # answers go with it (ON DELETE CASCADE)
+        return conn.execute("DELETE FROM runs WHERE id = ?", (run_id,)).rowcount > 0
+
+
+EXPORT_COLUMNS = ["run_id", "created_at", "experiment_id", "model_used", "status", "input_tokens", "cost_usd",
+                  "question_id", "type", "instructions", "result", "confidence", "probabilities", "input_text",
+                  "tags", "note", "error"]
+
+
+def _result(a: dict | None):
+    if not a:
+        return ""
+    if a.get("type") == "box":
+        b = a.get("box") or {}
+        return ",".join(str(b.get(k)) for k in ("top", "bottom", "left", "right"))
+    return a.get(a.get("type"), "")
+
+
+def export_runs(conn, filters: dict, fmt: str) -> bytes:
+    runs = list_runs(conn, filters, limit=None)["runs"]
+    if fmt == "jsonl":
+        return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in runs).encode()
+    out = io.StringIO()
+    w = csv.writer(out, lineterminator="\r\n")
+    w.writerow(EXPORT_COLUMNS)
+    for r in runs:
+        inp = r["input"]
+        text = inp.get("text", "") if inp.get("kind") != "json" else json.dumps(inp.get("fields"), ensure_ascii=False)
+        for qid, q in r["questions"].items():
+            a = r["answers"].get(qid)
+            instr = q.get("instructions")
+            w.writerow([r["id"], r["created_at"], r["experiment_id"] or "", r["model_used"] or "", r["status"],
+                        "" if r["input_tokens"] is None else r["input_tokens"], "" if r["cost_usd"] is None else r["cost_usd"],
+                        qid, q.get("type"), instr if isinstance(instr, str) else json.dumps(instr, ensure_ascii=False),
+                        _result(a), (a or {}).get("confidence", ""),
+                        json.dumps(a["probabilities"], ensure_ascii=False) if a and a.get("probabilities") else "",
+                        text, ";".join(r["tags"]), r["note"] or "", r["error"] or ""])
+    return ("﻿" + out.getvalue()).encode("utf-8")  # BOM so Excel reads UTF-8
 
 
 # ---------- experiments ----------

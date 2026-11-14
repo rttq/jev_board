@@ -1,6 +1,6 @@
 // Experiments: list, setup, and the matrix dashboard. Live controls re-render from applyView with no fetch.
 import { h, api, app, registerView, fmtProb, fmtUSD, choiceEditor, levelsEditor, renderAnswer, TYPE_LABEL, confirmDialog } from "./app.js";
-import { applyView, transpose } from "./metrics.js";
+import { applyView, transpose, matrixCsv } from "./metrics.js";
 
 const DEFAULT_VIEW = {
   threshold: { low: 0.5, high: 0.8 }, focus_option: null, sort: { by: "input", dir: "asc" },
@@ -292,7 +292,9 @@ function toolbar() {
       h("span", { class: "muted small" }, "yes"),
       h("span", { style: "flex:1" }),
       seg([["value", "Values"], ["cost", "Cost"]], v.overlay, x => { v.overlay = x; drawAll(); saveViewSoon(); }),
-      h("button", { type: "button", "aria-pressed": String(!!v.pivot), onclick: () => { v.pivot = !v.pivot; drawAll(); saveViewSoon(); } }, "Pivot")),
+      h("button", { type: "button", "aria-pressed": String(!!v.pivot), onclick: () => { v.pivot = !v.pivot; drawAll(); saveViewSoon(); } }, "Pivot"),
+      h("button", { type: "button", title: "Download what the grid shows: visible rows and variants, values, composite, spread, label, metrics",
+                    onclick: exportMatrix }, "Export CSV")),
     h("div", { class: "row" },
       sel("Sort", v.sort.by, sortOpts, x => { v.sort.by = x; changed(); }),
       h("button", { type: "button", "aria-label": "sort direction", onclick: ev => {
@@ -501,6 +503,16 @@ function colHeader(c) {
 }
 
 let lastResult = null;
+
+// ---------- matrix export: the current applyView result, so what you see is what you export ----------
+function exportMatrix() {
+  if (!lastResult) return;
+  const safe = s => s.replace(/[\\/:*?"<>|]+/g, "-").trim() || "matrix";
+  const url = URL.createObjectURL(new Blob([matrixCsv(lastResult, S.exp, S.exp.view.model === "compare")], { type: "text/csv" }));
+  const a = h("a", { href: url, download: `${safe(S.exp.name)}-${safe(S.viewName || "current")}.csv` });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 function drawGrid() {
   if (!root || !S) return;

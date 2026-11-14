@@ -6,7 +6,9 @@ import mimetypes
 import os
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import parse_qs, urlparse
 
 from . import jev, store
@@ -18,6 +20,13 @@ STATIC_MODELS = ["jev-latest", "jev-preview", "jev-1.14.0", "jev-1.13.0"]
 class ApiError(Exception):
     def __init__(self, status: int, error: str, field: str | None = None, **extra):
         self.status, self.error, self.field, self.extra = status, error, field, extra
+
+
+class Download(NamedTuple):
+    """A handler result sent as a file instead of JSON."""
+    data: bytes
+    ctype: str
+    filename: str
 
 
 # ---------- handlers: fn(ctx, params, query, body) -> (status, obj) ----------
@@ -100,6 +109,46 @@ def h_get_run(ctx, params, query, body):
     return 200, run
 
 
+RUN_FILTERS = ("type", "model", "status", "tag", "experiment_id", "q", "from", "to", "ids")
+
+
+def _filters(query) -> dict:
+    return {k: query[k][0] for k in RUN_FILTERS if query.get(k) and query[k][0] != ""}
+
+
+def h_list_runs(ctx, params, query, body):
+    try:
+        limit = int((query.get("limit") or [50])[0]); offset = int((query.get("offset") or [0])[0])
+        return 200, store.list_runs(ctx["conn"], _filters(query), limit, offset)
+    except ValueError:
+        raise ApiError(400, "limit, offset, experiment_id and ids must be numbers")
+
+
+def h_patch_run(ctx, params, query, body):
+    run = store.patch_run(ctx["conn"], int(params[0]), body or {})
+    if run is None:
+        raise ApiError(404, "run not found")
+    return 200, run
+
+
+def h_delete_run(ctx, params, query, body):
+    if not store.delete_run(ctx["conn"], int(params[0])):
+        raise ApiError(404, "run not found")
+    return 204, None
+
+
+def h_export(ctx, params, query, body):
+    fmt = (query.get("format") or ["csv"])[0]
+    if fmt not in ("csv", "jsonl"):
+        raise ApiError(400, "format must be csv or jsonl", "format")
+    try:
+        data = store.export_runs(ctx["conn"], _filters(query), fmt)
+    except ValueError:
+        raise ApiError(400, "experiment_id and ids must be numbers")
+    ctype = "text/csv; charset=utf-8" if fmt == "csv" else "application/x-ndjson; charset=utf-8"
+    return 200, Download(data, ctype, f"jevbench-{date.today().isoformat()}.{fmt}")
+
+
 def _exp(ctx, exp_id):
     exp = store.get_experiment(ctx["conn"], int(exp_id))
     if exp is None:
@@ -161,7 +210,11 @@ ROUTES = [
     ("POST", r"/api/prefs/reset", h_reset_prefs),
     ("GET", r"/api/totals", lambda ctx, p, q, b: (200, store.totals(ctx["conn"], ctx["started_at"]))),
     ("POST", r"/api/runs", h_post_run),
+    ("GET", r"/api/runs", h_list_runs),
     ("GET", r"/api/runs/(\d+)", h_get_run),
+    ("PATCH", r"/api/runs/(\d+)", h_patch_run),
+    ("DELETE", r"/api/runs/(\d+)", h_delete_run),
+    ("GET", r"/api/export", h_export),
     ("GET", r"/api/experiments", h_list_exps),
     ("POST", r"/api/experiments", h_create_exp),
     ("GET", r"/api/experiments/(\d+)", h_get_exp),
@@ -240,6 +293,9 @@ def make_handler(ctx):
                 except json.JSONDecodeError:
                     return self.send_json(400, {"error": "body is not valid JSON", "field": None})
             status, obj = dispatch(ctx, method, path, parse_qs(url.query), body)
+            if isinstance(obj, Download):
+                return self._send(status, obj.data, obj.ctype,
+                                  {"Content-Disposition": f'attachment; filename="{obj.filename}"'})
             self.send_json(status, obj)
 
         def do_GET(self):

@@ -363,6 +363,80 @@ class TestExperiments(Base):
                                          {"name": "apple-wording copy", "type": "noul"})[0], 409)
 
 
+class TestHistory(Base):
+    def setUp(self):
+        super().setUp()
+        fake = FakeJev()
+        st, e = server.dispatch(self.ctx(fake), "POST", "/api/experiments", {}, {"name": "e", "type": "noul", "rows": [], "columns": []})
+        self.exp_id = e["experiment"]["id"]
+        self.r1 = self.post_run(fake, {"input": APPLE, "questions": {"q1": NOUL}, "experiment_id": self.exp_id})[1]
+        self.r2 = self.post_run(fake, {"input": {"kind": "text", "text": "Красное яблоко"}, "questions": {"c": CHOICE, "s": SCORE}})[1]
+        self.r3 = self.post_run(FakeJev(fail=(500, {"error": {"message": "boom"}})), {"input": APPLE, "questions": {"q1": CHOICE}})[1]
+        server.dispatch(self.ctx(), "PATCH", f"/api/runs/{self.r2['id']}", {}, {"note": "russian", "tags": ["ru", "fruit"]})
+
+    def ids(self, **q):
+        st, out = server.dispatch(self.ctx(), "GET", "/api/runs", {k: [str(v)] for k, v in q.items()}, None)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["total"], len(out["runs"]))
+        return [r["id"] for r in out["runs"]]
+
+    def test_filters_narrow(self):
+        r1, r2, r3 = self.r1["id"], self.r2["id"], self.r3["id"]
+        self.assertEqual(self.ids(), [r3, r2, r1])  # newest first
+        self.assertEqual(self.ids(type="noul"), [r1])
+        self.assertEqual(self.ids(type="choice"), [r3, r2])  # the error run matches by what was sent
+        self.assertEqual(self.ids(status="error"), [r3])
+        self.assertEqual(self.ids(model="jev-1.14.0"), [r2, r1])
+        self.assertEqual(self.ids(experiment_id=self.exp_id), [r1])
+        self.assertEqual(self.ids(tag="ru"), [r2])
+        self.assertEqual(self.ids(tag="r"), [])  # whole tags only
+        self.assertEqual(self.ids(q="crisp"), [r3, r1])
+        self.assertEqual(self.ids(q="яблоко"), [r2])  # non-ASCII text is stored escaped
+        self.assertEqual(self.ids(q="russian"), [r2])  # note
+        self.assertEqual(self.ids(ids=f"{r1},{r3}"), [r3, r1])
+        today = self.r1["created_at"][:10]
+        self.assertEqual(self.ids(**{"from": today, "to": today}), [r3, r2, r1])
+        self.assertEqual(self.ids(to="2000-01-01"), [])
+        st, page = server.dispatch(self.ctx(), "GET", "/api/runs", {"limit": ["1"], "offset": ["1"]}, None)
+        self.assertEqual((page["total"], [r["id"] for r in page["runs"]]), (3, [r2]))
+
+    def test_patch_only_note_and_tags_and_delete_cascades(self):
+        st, run = server.dispatch(self.ctx(), "PATCH", f"/api/runs/{self.r1['id']}", {},
+                                  {"note": "n", "tags": "a, b", "cost_usd": 99, "status": "error"})
+        self.assertEqual((run["note"], run["tags"], run["status"], run["cost_usd"]), ("n", ["a", "b"], "ok", self.r1["cost_usd"]))
+        self.assertEqual(server.dispatch(self.ctx(), "PATCH", "/api/runs/999", {}, {"note": "x"})[0], 404)
+        st, _ = server.dispatch(self.ctx(), "DELETE", f"/api/runs/{self.r2['id']}", {}, None)
+        self.assertEqual(st, 204)
+        self.assertEqual(self.conn.execute("SELECT count(*) FROM answers WHERE run_id = ?", (self.r2["id"],)).fetchone()[0], 0)
+        self.assertEqual(server.dispatch(self.ctx(), "DELETE", f"/api/runs/{self.r2['id']}", {}, None)[0], 404)
+
+    def test_csv_one_row_per_question_with_exact_header(self):
+        import csv, io
+        st, d = server.dispatch(self.ctx(), "GET", "/api/export", {"format": ["csv"]}, None)
+        self.assertEqual(st, 200)
+        self.assertTrue(d.filename.endswith(".csv"))
+        self.assertTrue(d.data.startswith("﻿".encode()))
+        rows = list(csv.reader(io.StringIO(d.data.decode("utf-8-sig"))))
+        self.assertEqual(rows[0], store.EXPORT_COLUMNS)
+        self.assertEqual(len(rows) - 1, 4)  # r3: 1 question, r2: 2, r1: 1
+        by = {(r[0], r[7]): dict(zip(rows[0], r)) for r in rows[1:]}
+        self.assertEqual(by[(str(self.r2["id"]), "s")]["result"], "1.43")
+        self.assertEqual(by[(str(self.r2["id"]), "c")]["input_text"], "Красное яблоко")
+        self.assertEqual(by[(str(self.r2["id"]), "c")]["tags"], "ru;fruit")
+        self.assertEqual(by[(str(self.r3["id"]), "q1")]["result"], "")
+        self.assertIn("boom", by[(str(self.r3["id"]), "q1")]["error"])
+        st, d = server.dispatch(self.ctx(), "GET", "/api/export", {"format": ["csv"], "type": ["noul"]}, None)
+        self.assertEqual(len(d.data.decode("utf-8-sig").strip().splitlines()), 2)  # header + r1
+        self.assertEqual(server.dispatch(self.ctx(), "GET", "/api/export", {"format": ["xml"]}, None)[0], 400)
+
+    def test_jsonl_round_trips_get_run(self):
+        st, d = server.dispatch(self.ctx(), "GET", "/api/export", {"format": ["jsonl"]}, None)
+        lines = [json.loads(x) for x in d.data.decode().splitlines()]
+        self.assertEqual([x["id"] for x in lines], [self.r3["id"], self.r2["id"], self.r1["id"]])
+        for x in lines:
+            self.assertEqual(x, store.get_run(self.conn, x["id"]))
+
+
 class TestNoulCriteria(unittest.TestCase):
     def test_shape(self):
         ok = lambda c: not jev.validate_questions({"q1": {**NOUL, "criteria": c}}, False, "jev-latest")

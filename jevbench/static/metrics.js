@@ -174,3 +174,23 @@ export function transpose(result) {
     columns: result.rows.map(r => ({ key: r.key, row: r })),
   };
 }
+
+// Matrix CSV of an applyView result (what you see is what you export). BOM so Excel reads UTF-8.
+const csvCell = x => { const s = x == null ? "" : String(x); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+const num4 = v => (v == null ? "" : +v.toFixed(4));
+
+export function matrixCsv(result, exp, compare = false) {
+  const vname = key => key.replace(/^c/, "v").replace(/@.*/, "");
+  const cols = result.columns;
+  const name = c => vname(c.key) + (compare ? "@" + c.model : "");
+  const lines = [["input", "label", "tags", ...cols.map(c => `${name(c)}: ${String(c.col.instructions)}`), "composite", "spread"],
+    ...result.rows.map(r => [r.input, r.label ?? "", r.tags.join(";"), ...cols.map(c => num4(r.values[c.key]?.v)), num4(r.composite), num4(r.spread)]),
+    [], ["metric", "", "", ...cols.map(name), "composite", ""]];
+  const stat = (label, f) => lines.push([label, "", "", ...cols.map(c => f(c.stats, c.metrics, c.best)),
+                                         f(result.compositeStats, result.compositeMetrics, result.compositeBest), ""]);
+  stat("mean", s => num4(s.mean)); stat("yes", s => s.yes); stat("review", s => s.review); stat("no", s => s.no);
+  stat("n", (s, m) => m?.n ?? 0); stat("accuracy", (s, m) => num4(m?.accuracy));
+  if (exp.type === "score") stat("mae_levels", (s, m) => num4(m?.mae));
+  else { stat("review_rate", (s, m) => num4(m?.reviewRate)); stat("best_threshold", (s, m, b) => num4(b?.t)); stat("brier", (s, m) => num4(m?.brier)); }
+  return "\ufeff" + lines.map(l => l.map(csvCell).join(",")).join("\r\n") + "\r\n";
+}

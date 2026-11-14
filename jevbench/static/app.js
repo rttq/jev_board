@@ -189,6 +189,33 @@ function newQuestion(type) {
            levels: ["", ""], yes: "", no: "" };
 }
 
+function fromWire(id, w) {
+  const q = { id, type: w.type, instructions: typeof w.instructions === "string" ? w.instructions : JSON.stringify(w.instructions),
+              choice: [{ key: "", desc: "" }, { key: "", desc: "" }], levels: ["", ""], yes: "", no: "" };
+  if (w.type === "choice") q.choice = Object.entries(w.criteria || {}).map(([key, d]) => ({ key, desc: typeof d === "string" ? d : "" }));
+  if (w.type === "score") q.levels = (w.criteria || []).map(l => (typeof l === "string" ? l : JSON.stringify(l)));
+  if (w.type === "noul") { q.yes = w.criteria?.true || ""; q.no = w.criteria?.false || ""; }
+  return q;
+}
+
+// History → "Open in editor": load a saved run into the Run view (nothing is sent).
+export async function openInEditor(run) {
+  const inp = run.input;
+  draft.kind = inp.kind === "json" ? "json" : "text";
+  if (draft.kind === "text") draft.text = inp.text; else draft.fields = JSON.stringify(inp.fields, null, 2);
+  draft.model = run.model_requested;
+  draft.questions = Object.entries(run.questions).map(([id, w]) => fromWire(id, w));
+  Object.assign(draft, { focus: draft.questions[0]?.id, errors: {}, result: null, image: null });
+  if (run.image_sha) {
+    try {
+      const blob = await (await fetch(`/api/images/${run.image_sha}`)).blob();
+      const url = await new Promise(res => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
+      draft.image = { b64: url.split(",")[1], url, name: `image from run #${run.id}` };
+    } catch { /* the editor shows "attach image" and Box explains why it cannot run */ }
+  }
+  location.hash = "#/run";
+}
+
 // Wire format for one question (criteria shape depends on type).
 export function toWire(q) {
   const w = { type: q.type, instructions: q.instructions.trim() };
@@ -542,7 +569,7 @@ async function boot() {
   applyPrefs();
   showBanner();
   refreshTotals();
-  await import("./experiments.js");  // registers its views; loaded after app.js so the import cycle is safe
+  await Promise.all([import("./experiments.js"), import("./history.js")]);  // register their views; loaded after app.js so the import cycle is safe
   addEventListener("hashchange", route);
   route();
 }

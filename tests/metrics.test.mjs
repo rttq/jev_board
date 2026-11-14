@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cellValue, band, spread, columnStats, composite, agreement, costShare, applyView, transpose,
-         labelMetrics, bestThreshold, isMiss }
+         labelMetrics, bestThreshold, isMiss, matrixCsv }
   from "../jevbench/static/metrics.js";
 
 const T = { low: 0.5, high: 0.8 };
@@ -165,4 +165,22 @@ test("isMiss and the misclassified filter", () => {
   const f = applyView(lab, cells, runCosts, { ...view, filters: { misclassified: true } }, [M]);
   assert.deepEqual(f.rows.map(r => r.key), ["r2"]);
   assert.equal(f.compositeMetrics.n, 1);
+});
+
+test("matrixCsv: one row per visible input, values, composite, spread, label, then a metrics block", () => {
+  const lab = { ...exp, rows: exp.rows.map(r => (r.key === "r2" ? { ...r, label: "no", input: { kind: "text", text: 'a "red", thing' } } : r)) };
+  const out = applyView(lab, cells, runCosts, view, [M]);
+  const csv = matrixCsv(out, lab);
+  assert.ok(csv.startsWith("\ufeff"));
+  const lines = csv.slice(1).trimEnd().split("\r\n");
+  assert.equal(lines[0], "input,label,tags,v1: aaaa,v2: aaaaaaaaaaaa,composite,spread");
+  assert.equal(lines[1], '"a ""red"", thing",no,,0.2,0.25,0.225,0.05');  // quoted, sorted by input
+  assert.equal(lines[2], "b green,yes,g,0.62,0.95,0.785,0.33");
+  assert.equal(lines[3], "c none,,,,,,");
+  assert.equal(lines[4], "");
+  assert.equal(lines[5], "metric,,,v1,v2,composite,");
+  const row = name => lines.find(l => l.startsWith(name + ",")).split(",");
+  assert.deepEqual(row("n").slice(3, 6), ["2", "2", "2"]);
+  assert.deepEqual(row("accuracy").slice(3, 5), ["1", "1"]);  // r1 c1 is review → excluded; the rest correct
+  assert.ok(row("best_threshold") && row("brier"));
 });

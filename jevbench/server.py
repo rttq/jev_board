@@ -92,7 +92,8 @@ def h_post_run(ctx, params, query, body):
         if not path.exists():
             path.write_bytes(image_bytes)
 
-    result = jev.call_jev(ctx["client"], model, jev.build_state(inp, image_bytes), questions)
+    result = jev.call_jev(ctx["client"], model, jev.build_state(inp, image_bytes), questions,
+                          has_image=image_bytes is not None)
     price = store.get_prefs(ctx["conn"])["price_per_mtok"]
     run = {**result, "input": inp, "input_hash": jev.input_hash(inp, image_sha), "image_sha": image_sha,
            "questions": questions, "model_requested": model, "experiment_id": body.get("experiment_id"),

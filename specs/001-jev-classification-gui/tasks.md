@@ -202,9 +202,9 @@ Single Python package at repo root: `jevbench/` (server + `jevbench/static/` pag
 
 **Independent Test**: An apple photo with Box ``the apple in `image` `` shows a rectangle on the image; "Add presence check" adds a Noul.
 
-- [ ] T066 [US9] In `jevbench/static/app.js`, enable Box in the Run view type select only when the selected model does not start with `jev-1.13` (aliases allowed); add a Box result renderer (the attached image, or `/api/images/<sha>` in History, with an absolutely positioned `<svg viewBox="0 0 100 100" preserveAspectRatio="none">` rect from `left/top/right/bottom × 100`, plus confidence); an "Add presence check" button that appends a Noul ``Is there <instructions target> in `image`?``
-- [ ] T067 [US9] Add tests in `tests/test_core.py`: a Box run with an image stores the image file and the answer, and Box is rejected without an image or on `jev-1.13.0`
-- [ ] T068 [P] [US9] Add Box overlay styles in `jevbench/static/style.css` (relative image wrapper, rect stroke from an accent token, no fill)
+- [X] T066 [US9] In `jevbench/static/app.js`, enable Box in the Run view type select only when the selected model does not start with `jev-1.13` (aliases allowed); add a Box result renderer (the attached image, or `/api/images/<sha>` in History, with an absolutely positioned `<svg viewBox="0 0 100 100" preserveAspectRatio="none">` rect from `left/top/right/bottom × 100`, plus confidence); an "Add presence check" button that appends a Noul ``Is there <instructions target> in `image`?``
+- [X] T067 [US9] Add tests in `tests/test_core.py`: a Box run with an image stores the image file and the answer, and Box is rejected without an image or on `jev-1.13.0`
+- [X] T068 [P] [US9] Add Box overlay styles in `jevbench/static/style.css` (relative image wrapper, rect stroke from an accent token, no fill)
 
 **Checkpoint**: All user stories are complete
 

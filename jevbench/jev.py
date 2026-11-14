@@ -119,11 +119,16 @@ def _error_message(e: Exception) -> str:
     return str(e)
 
 
-def call_jev(client, model: str, state, questions: dict) -> dict:
+# The API rejects images unless the request opts in (400 "Images are experimental").
+IMAGE_HEADERS = {"TypeSafe-Danger-Zone-Images": "true"}
+
+
+def call_jev(client, model: str, state, questions: dict, has_image: bool = False) -> dict:
     t0 = time.perf_counter()
     out = {"status": "ok", "model_used": None, "answers": None, "input_tokens": None, "request_id": None, "error": None}
     try:
-        r = client.system_one(state=state, questions=questions, model=model)
+        r = client.system_one(state=state, questions=questions, model=model,
+                              extra_headers=IMAGE_HEADERS if has_image else None)
         out["model_used"] = r.model
         out["answers"] = {k: v.model_dump(mode="json") for k, v in r.answers.items()}
         out["input_tokens"] = r.usage.input_tokens if r.usage else None

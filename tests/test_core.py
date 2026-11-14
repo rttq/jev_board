@@ -52,6 +52,7 @@ class FakeJev:
         self.calls += 1
         if self.fail:
             return httpx2.Response(self.fail[0], json=self.fail[1])
+        self.headers = req.headers
         body = self.last = _request_json(req)
         answers = {qid: CANNED[q["type"]] for qid, q in body["questions"].items()}
         return httpx2.Response(200, headers={"x-typesafe-request-id": "req_test"},
@@ -235,6 +236,30 @@ class TestRunFlow(Base):
         self.assertAlmostEqual(t["all_time"]["cost_usd"], 2 * 118 * 0.042 / 1e6)
         self.assertIsNone(b["cost_usd"])
 
+
+    def test_box_run_with_image(self):
+        fake = FakeJev()
+        box = {"type": "box", "instructions": "the apple in `image`"}
+        body = {"input": APPLE, "image_base64": base64.b64encode(PNG).decode(), "questions": {"b": box}}
+        status, run = self.post_run(fake, body)
+        self.assertEqual((status, run["status"]), (200, "ok"))
+        self.assertEqual(run["answers"]["b"], CANNED["box"])
+        self.assertTrue((self.data / "images" / f"{run['image_sha']}.png").read_bytes() == PNG)
+        self.assertEqual(store.get_run(self.conn, run["id"])["answers"]["b"]["box"], CANNED["box"]["box"])
+        self.assertEqual(fake.headers.get("typesafe-danger-zone-images"), "true")
+        self.post_run(fake, {"input": APPLE, "questions": {"q1": NOUL}})
+        self.assertIsNone(fake.headers.get("typesafe-danger-zone-images"))  # text-only runs do not opt in
+
+    def test_box_rejected_without_image_or_on_1_13(self):
+        fake = FakeJev()
+        box = {"type": "box", "instructions": "the apple in `image`"}
+        status, _ = self.post_run(fake, {"input": APPLE, "questions": {"b": box}})
+        self.assertEqual(status, 400)
+        status, body = self.post_run(fake, {"input": APPLE, "image_base64": base64.b64encode(PNG).decode(),
+                                            "model": "jev-1.13.0", "questions": {"b": box}})
+        self.assertEqual(status, 400)
+        self.assertIn("1.14", body["error"])
+        self.assertEqual((fake.calls, self.run_count()), (0, 0))
 
 class TestExperiments(Base):
     def exp(self, fake=None, **over):

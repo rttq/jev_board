@@ -299,7 +299,8 @@ function questionCard(q, idx, rerender) {
   const touch = () => { draft.errors = {}; };
   const typeSel = h("select", { "aria-label": "Question type",
     onchange: e => { q.type = e.target.value; draft.focus = q.id; rerender(); } },
-    Object.entries(TYPE_LABEL).map(([v, l]) => h("option", { value: v, selected: q.type === v }, l)));
+    Object.entries(TYPE_LABEL).map(([v, l]) => h("option", { value: v, selected: q.type === v,
+      disabled: v === "box" && (draft.model || "").startsWith("jev-1.13") }, v === "box" && (draft.model || "").startsWith("jev-1.13") ? l + " (Jev 1.14+)" : l)));
   let crit = null;
   if (q.type === "choice") crit = choiceEditor(q.choice, touch, rerender);
   if (q.type === "score") crit = levelsEditor(q.levels, touch, rerender);
@@ -404,7 +405,7 @@ function renderRun(view) {
   const reason = runReason();
   const runBtn = h("button", { class: "primary", type: "button", disabled: !!reason, title: reason || "Run (Ctrl+Enter)",
                                onclick: () => doRun(rerender) }, draft.running ? "Running…" : "Run");
-  const modelSel = h("select", { "aria-label": "Model", onchange: e => { draft.model = e.target.value; draft.errors = {}; } },
+  const modelSel = h("select", { "aria-label": "Model", onchange: e => { draft.model = e.target.value; draft.errors = {}; rerender(); } },
     app.status.models.map(m => h("option", { value: m, selected: m === draft.model }, m)));
 
   const editor = h("div", { class: "stack" },
@@ -423,7 +424,12 @@ function renderRun(view) {
   const focused = draft.questions.find(q => q.id === draft.focus) || draft.questions[0];
   view.append(
     h("div", { class: "run-layout" }, editor, h("aside", { id: "guide-slot", "aria-label": "Type guide" }, guideSlot(focused.type))),
-    h("section", { class: "results", "aria-live": "polite" }, draft.result && renderResult(draft.result, draft.questions)));
+    h("section", { class: "results", "aria-live": "polite" }, draft.result && renderResult(draft.result, draft.questions, { onPresence: q => {
+      const target = q.instructions.replace(/\s*in\s+`image`\s*[.?]?\s*$/i, "").trim();
+      const n = newQuestion("noul");
+      n.instructions = `Is there ${target} in \`image\`?`;
+      draft.questions.push(n); draft.focus = n.id; rerender();
+    } })));
   view.onkeydown = e => { if (e.ctrlKey && e.key === "Enter" && !runReason()) { e.preventDefault(); doRun(rerender); } };
 }
 registerView("run", renderRun);
@@ -529,22 +535,39 @@ const renderers = {
       probs.map(([i, p]) => barLine(`${i} · ${a.legend[i]}`, p, i === Math.round(a.score))),
       split && h("p", { class: "hint" }, `Split answer: levels ${t1[0]} and ${t2[0]} both carry weight. The position alone hides this.`));
   },
-  box(a) {
+  box(a, { run, q, onPresence } = {}) {
     const b = a.box;
-    return h("div", {},
-      h("div", { class: "row" }, h("span", { class: "muted" }, "confidence " + fmtProb(a.confidence)), confTag(a.confidence)),
-      h("p", { class: "small" }, `top ${b.top.toFixed(3)} · bottom ${b.bottom.toFixed(3)} · left ${b.left.toFixed(3)} · right ${b.right.toFixed(3)}`));
+    let overlay = null;
+    if (run?.image_sha) {
+      const NS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("viewBox", "0 0 100 100");
+      svg.setAttribute("preserveAspectRatio", "none");
+      svg.setAttribute("aria-hidden", "true");
+      const rect = document.createElementNS(NS, "rect");
+      for (const [k, v] of Object.entries({ x: b.left * 100, y: b.top * 100, width: (b.right - b.left) * 100, height: (b.bottom - b.top) * 100 }))
+        rect.setAttribute(k, v);
+      svg.append(rect);
+      overlay = h("div", { class: "box-wrap" },
+        h("img", { src: `/api/images/${run.image_sha}`, alt: "Image with the found box drawn on it" }), svg);
+    }
+    return h("div", { class: "stack" },
+      overlay,
+      h("div", { class: "row" }, h("span", { class: "muted" }, "confidence " + fmtProb(a.confidence)), confTag(a.confidence),
+        onPresence && q && h("button", { type: "button", onclick: () => onPresence(q),
+          title: "A Box always returns a box. A Noul tells you whether the object is there at all." }, "Add presence check")),
+      h("p", { class: "small muted", style: "margin:0" }, `top ${b.top.toFixed(3)} · bottom ${b.bottom.toFixed(3)} · left ${b.left.toFixed(3)} · right ${b.right.toFixed(3)}`));
   },
 };
 
-export function renderAnswer(qid, q, a) {
+export function renderAnswer(qid, q, a, ctx) {
   return h("div", { class: "ans" },
     h("div", { class: "ans-head" }, h("strong", {}, qid), h("span", { class: "qtype" }, TYPE_LABEL[a.type] || a.type),
       q && h("span", { class: "instr" }, q.instructions)),
-    (renderers[a.type] || (x => h("pre", {}, JSON.stringify(x, null, 2))))(a));
+    (renderers[a.type] || (x => h("pre", {}, JSON.stringify(x, null, 2))))(a, { ...ctx, q }));
 }
 
-export function renderResult(run, questions) {
+export function renderResult(run, questions, { onPresence } = {}) {
   if (run.status === "error") {
     return h("div", { class: "result error", role: "alert" },
       h("strong", {}, run.local ? "Not sent: " : "Jev call failed: "), run.error,
@@ -552,7 +575,7 @@ export function renderResult(run, questions) {
   }
   const qmap = run.questions || Object.fromEntries(questions.map(q => [q.id, toWire(q)]));
   return h("div", { class: "result" },
-    Object.entries(run.answers).map(([qid, a]) => renderAnswer(qid, qmap[qid], a)),
+    Object.entries(run.answers).map(([qid, a]) => renderAnswer(qid, qmap[qid], a, { run, onPresence })),
     h("p", { class: "meta" },
       [run.model_used, run.input_tokens == null ? "tokens unknown" : `${run.input_tokens} tok`, fmtUSD(run.cost_usd),
        `${run.duration_ms} ms`, `run #${run.id}`].join(" · ")));

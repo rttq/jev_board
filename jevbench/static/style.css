@@ -205,6 +205,8 @@ td.cell.failed { color: var(--no); font-weight: 700; }
 td.cell.comp { cursor: default; }
 td.cell:focus-visible, td.cell.is-sel { outline: 2px solid var(--accent); outline-offset: -2px; }
 td.cell.miss { outline: 3px solid var(--no); outline-offset: -3px; }
+td.cell .x { margin-left: 4px; color: var(--no); font-weight: 700; }
+select.lbl { max-width: 11em; font-size: .8rem; }
 
 @media (max-width: 520px) {
   .barline { grid-template-columns: minmax(4em, 7em) 1fr 3.8em; }

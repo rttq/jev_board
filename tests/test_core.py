@@ -312,6 +312,26 @@ class TestExperiments(Base):
         self.assertEqual(st, 400)
         self.assertEqual([r["index"] for r in out["rows"]], [1, 2])
 
+    def test_labels_per_type_on_create_and_update(self):
+        cases = [("noul", None, ["yes", "no", None], ["maybe", True, 1]),
+                 ("choice", {"apple": None, "pear": None}, ["apple", "pear", None], ["plum", "Apple", 0]),
+                 ("score", ["a", "b", "c"], [0, 2, None], [3, -1, "1", 1.0, True])]
+        for t, crit, good, bad in cases:
+            with self.subTest(type=t):
+                rows = [{"input": f"g{i}", "label": l} for i, l in enumerate(good)]
+                st, out = server.dispatch(self.ctx(), "POST", "/api/experiments", {},
+                                          {"name": t, "type": t, "criteria": crit, "rows": rows, "columns": []})
+                self.assertEqual(st, 200, out)
+                exp = out["experiment"]
+                bad_rows = exp["rows"] + [{"input": f"b{i}", "label": l} for i, l in enumerate(bad)]
+                st, out = server.dispatch(self.ctx(), "PUT", f"/api/experiments/{exp['id']}", {}, {"rows": bad_rows})
+                self.assertEqual(st, 400)
+                self.assertEqual([r["index"] for r in out["rows"]], list(range(len(good), len(good) + len(bad))))
+                # a valid label change through PUT (what the grid's label select sends) is saved
+                fixed = [{**r, "label": good[1]} for r in exp["rows"]]
+                st, out = server.dispatch(self.ctx(), "PUT", f"/api/experiments/{exp['id']}", {}, {"rows": fixed})
+                self.assertEqual([r["label"] for r in out["experiment"]["rows"]], [good[1]] * len(good))
+
     def test_duplicates_merge_with_warning_and_delete_keeps_runs(self):
         fake = FakeJev()
         out = self.exp(fake, rows=[{"input": "a"}, {"input": "a"}])

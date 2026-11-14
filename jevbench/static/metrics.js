@@ -37,6 +37,57 @@ export function agreement(rowBands) {
   return rows.length ? rows.filter(bs => bs.every(b => b === bs[0])).length / rows.length : null;
 }
 
+// ---- labels (points = [{v, label}], v = cell value; for Score v = score / (N-1)) ----
+const truthOf = (label, type, focus) => (type === "noul" ? label === "yes" : label === focus);
+const labeled = points => points.filter(p => p.v != null && p.label != null);
+
+// Noul/Choice: wrong only when decided (review is not a miss). Score: nearest level differs from the label.
+export function isMiss(v, label, type, t, { focus, nLevels } = {}) {
+  if (v == null || label == null) return false;
+  if (type === "score") return Math.round(v * ((nLevels || 2) - 1)) !== label;
+  const b = band(v, t);
+  return b !== "review" && (b === "yes") !== truthOf(label, type, focus);
+}
+
+export function labelMetrics(points, type, t, { focus, nLevels } = {}) {
+  const ps = labeled(points), n = ps.length;
+  if (!n) return null;
+  if (type === "score") {
+    const k = (nLevels || 2) - 1;
+    let ok = 0, err = 0;
+    for (const p of ps) { ok += Math.round(p.v * k) === p.label; err += Math.abs(p.v * k - p.label); }
+    return { n, accuracy: ok / n, mae: err / n };
+  }
+  const m = { n, tp: 0, tn: 0, fp: 0, fn: 0, review: 0 };
+  let brier = 0;
+  for (const p of ps) {
+    const b = band(p.v, t), y = truthOf(p.label, type, focus);
+    if (b === "review") m.review++; else m[b === "yes" ? (y ? "tp" : "fp") : (y ? "fn" : "tn")]++;
+    brier += (p.v - y) ** 2;
+  }
+  const decided = n - m.review;
+  return { ...m, accuracy: decided ? (m.tp + m.tn) / decided : null, reviewRate: m.review / n, brier: brier / n };
+}
+
+// The single cut t (low = high = t, v ≥ t is yes) with the best accuracy. Candidates: each value, plus 1 ("all no").
+// Ties go to the t closest to 0.5. Sorted sweep, so O(n log n).
+export function bestThreshold(points, type, { focus } = {}) {
+  if (type === "score") return null;
+  const ps = labeled(points).map(p => [p.v, truthOf(p.label, type, focus)]).sort((a, b) => a[0] - b[0]);
+  const n = ps.length;
+  if (!n) return null;
+  const pos = ps.filter(p => p[1]).length;
+  let best = null, posBelow = 0, negBelow = 0;
+  const consider = t => {
+    const acc = (negBelow + pos - posBelow) / n;
+    if (!best || acc > best.accuracy + 1e-12 || (acc > best.accuracy - 1e-12 && Math.abs(t - 0.5) < Math.abs(best.t - 0.5)))
+      best = { t, accuracy: acc };
+  };
+  ps.forEach(([v, y], i) => { if (i === 0 || v !== ps[i - 1][0]) consider(v); y ? posBelow++ : negBelow++; });
+  if (ps[n - 1][0] < 1) consider(1);
+  return best;
+}
+
 // ≈ cost of one column inside a request: run cost split by instruction length.
 export function costShare(runCost, colKey) {
   if (!runCost || runCost.cost_usd == null) return null;
@@ -64,21 +115,25 @@ export function applyView(exp, cells, runCosts, view, models = []) {
   }
   const f = view.filters || {};
   const text = (f.text || "").toLowerCase();
+  const lo = { focus, nLevels };
   let rows = exp.rows.map(r => {
-    const values = {};
+    const values = {}, label = r.label ?? null;
     for (const c of columns) {
       const cell = cells?.[r.key]?.[c.col.key]?.[c.model];
-      const cv = cell && cellValue(cell.answer, exp.type, { focus, nLevels });
-      values[c.key] = cv ? { ...cv, band: band(cv.v, c.t), runId: cell.run_id, answer: cell.answer, model: c.model } : null;
+      const cv = cell && cellValue(cell.answer, exp.type, lo);
+      values[c.key] = cv ? { ...cv, band: band(cv.v, c.t), miss: isMiss(cv.v, label, exp.type, c.t, lo),
+                             runId: cell.run_id, answer: cell.answer, model: c.model } : null;
     }
     const vs = columns.map(c => values[c.key]?.v ?? null);
     const comp = composite(vs, columns.map(c => c.w));
-    return { key: r.key, row: r, input: inputText(r.input), label: r.label ?? null, tags: r.tags || [], values,
-             composite: comp, compositeBand: comp == null ? null : band(comp, view.threshold), spread: spread(vs),
+    return { key: r.key, row: r, input: inputText(r.input), label, tags: r.tags || [], values,
+             composite: comp, compositeBand: comp == null ? null : band(comp, view.threshold),
+             compositeMiss: isMiss(comp, label, exp.type, view.threshold, lo), spread: spread(vs),
              runIds: [...new Set(Object.values(values).filter(Boolean).map(x => x.runId))] };
   });
   rows = rows.filter(r =>
     (f.labeled == null || (f.labeled === "labeled") === (r.label != null)) &&
+    (!f.misclassified || r.compositeMiss || Object.values(r.values).some(x => x?.miss)) &&
     (!f.review_only || Object.values(r.values).some(x => x?.band === "review")) &&
     (f.spread_min == null || (r.spread != null && r.spread >= f.spread_min)) &&
     (!f.tags?.length || r.tags.some(t => f.tags.includes(t))) &&
@@ -92,10 +147,18 @@ export function applyView(exp, cells, runCosts, view, models = []) {
     if (x == null || y == null) return x == null && y == null ? 0 : x == null ? 1 : -1; // empties last either way
     return (x < y ? -1 : x > y ? 1 : 0) * dir;
   });
-  for (const c of columns) c.stats = columnStats(rows.map(r => r.values[c.key]?.v ?? null), c.t);
+  for (const c of columns) {
+    const pts = rows.map(r => ({ v: r.values[c.key]?.v ?? null, label: r.label }));
+    c.stats = columnStats(pts.map(p => p.v), c.t);
+    c.metrics = labelMetrics(pts, exp.type, c.t, lo);
+    c.best = bestThreshold(pts, exp.type, lo);
+  }
+  const cpts = rows.map(r => ({ v: r.composite, label: r.label }));
   return {
     rows, columns, focus, model, nLevels,
     compositeStats: columnStats(rows.map(r => r.composite), view.threshold),
+    compositeMetrics: labelMetrics(cpts, exp.type, view.threshold, lo),
+    compositeBest: bestThreshold(cpts, exp.type, lo),
     agreement: agreement(rows.map(r => columns.map(c => r.values[c.key]?.band))),
     cost: Object.fromEntries(columns.map(c => [c.key, rows.reduce((a, r) => {
       const v = r.values[c.key]; const share = v && costShare(runCosts?.[v.runId], c.col.key);

@@ -273,7 +273,7 @@ function setupPanel() {
 // ---------- toolbar ----------
 function toolbar() {
   const v = S.exp.view, e = S.exp;
-  const num = (val, attrs, on) => h("input", { type: "number", step: "0.01", min: 0, max: 1, value: val, style: "width:5em", ...attrs,
+  const num = (val, attrs, on) => h("input", { type: "number", step: "any", min: 0, max: 1, value: val, style: "width:5em", ...attrs,
                                               onchange: ev => on(Number(ev.target.value)) });
   const setT = (which, x) => {
     x = Math.min(1, Math.max(0, x));
@@ -312,6 +312,8 @@ function toolbar() {
         v.sort.dir = v.sort.dir === "asc" ? "desc" : "asc"; ev.target.textContent = v.sort.dir; changed(); } }, v.sort.dir),
       sel("Show", v.filters.labeled ?? "", [["", "all rows"], ["labeled", "labeled"], ["unlabeled", "unlabeled"]],
           x => { v.filters.labeled = x || null; changed(); }),
+      (hasLabels() || v.filters.misclassified) && h("label", { class: "row small" }, h("input", { type: "checkbox", checked: !!v.filters.misclassified,
+        onchange: ev => { v.filters.misclassified = ev.target.checked; changed(); } }), "misclassified"),
       h("label", { class: "row small" }, h("input", { type: "checkbox", checked: v.filters.review_only,
         onchange: ev => { v.filters.review_only = ev.target.checked; changed(); } }), "review only"),
       h("label", { class: "row small" }, "spread ≥", h("input", { type: "number", step: "0.05", min: 0, max: 1, style: "width:5em",
@@ -419,7 +421,49 @@ function cellText(x, rv) {
   }
   const extra = S.exp.type === "choice" && !x.won ? h("span", { class: "alt", title: `Jev chose ${x.choice}` }, `↯${x.choice}`)
     : S.exp.type === "score" ? h("span", { class: "muted tiny lvl", title: S.exp.criteria[x.level] }, `“${S.exp.criteria[x.level]}”`) : null;
-  return [h("span", { class: "v" }, fmtProb(x.v)), h("span", { class: `tag tag-${x.band}` }, TAG[x.band]), extra];
+  return [h("span", { class: "v" }, fmtProb(x.v)), h("span", { class: `tag tag-${x.band}` }, TAG[x.band]), missMark(x.miss), extra];
+}
+
+const missMark = miss => miss && h("span", { class: "x", title: "Disagrees with the label", "aria-label": "misclassified" }, "✕");
+const hasLabels = () => S.exp.rows.some(r => r.label != null);
+
+function labelOptions() {
+  const e = S.exp;
+  const opts = e.type === "noul" ? [["yes", "yes"], ["no", "no"]]
+    : e.type === "choice" ? Object.keys(e.criteria || {}).map(k => [k, k])
+    : (e.criteria || []).map((l, i) => [String(i), `${i} · ${l.length > 28 ? l.slice(0, 27) + "…" : l}`]);
+  return [["", "—"], ...opts];
+}
+
+function labelCell(r) {
+  return h("td", {}, h("select", { class: "lbl", "data-label": r.key, "aria-label": `label for ${r.input}`,
+    onchange: ev => {
+      const row = S.exp.rows.find(x => x.key === r.key), val = ev.target.value;
+      row.label = val === "" ? null : S.exp.type === "score" ? Number(val) : val;
+      drawAll(); saveViewSoon();  // drawAll: the toolbar's misclassified filter appears with the first label
+      root.querySelector(`select[data-label="${CSS.escape(r.key)}"]`)?.focus();
+    } }, labelOptions().map(([val, text]) => h("option", { value: val, selected: String(r.label ?? "") === val }, text))));
+}
+
+const pct = x => (x == null ? "—" : `${Math.round(x * 100)}%`);
+
+function useThreshold(t) {
+  S.exp.view.threshold = { low: t, high: t };
+  drawAll(); saveViewSoon();
+}
+
+// Footer label metrics for one column (c) or the composite (m, best).
+function accText(m) {
+  if (!m) return "—";
+  return S.exp.type === "score" ? `${pct(m.accuracy)} (${m.n})` : `${pct(m.accuracy)} (${m.n}) · ${pct(m.reviewRate)}`;
+}
+function confText(m) { return m ? `${m.tp}/${m.tn}/${m.fp}/${m.fn}/${m.review}` : "—"; }
+function calText(m, best) {
+  if (!m) return "—";
+  if (S.exp.type === "score") return `${m.mae.toFixed(2)} lv`;
+  return [`${best.t.toFixed(2)} · ${m.brier.toFixed(2)} `,
+          h("button", { class: "link small", type: "button", title: `Set the threshold to ${best.t.toFixed(2)} (${pct(best.accuracy)} accuracy)`,
+                        onclick: () => useThreshold(best.t) }, "use")];  // exact: rounding can flip rows that sit within 0.01
 }
 
 function cellTd(rowKey, colKey, x, errorInfo) {
@@ -427,7 +471,7 @@ function cellTd(rowKey, colKey, x, errorInfo) {
   const open = () => { S.selected = { row: rowKey, col: colKey }; drawPanel(); markSelected(); };
   const attrs = { tabindex: 0, "data-cell": `${rowKey}|${colKey}`, class: "cell" + (sel ? " is-sel" : ""),
                   onclick: open, onkeydown: ev => { if (ev.key === "Enter") open(); } };
-  if (x) return h("td", { ...attrs, style: S.exp.view.overlay === "cost" ? "" : `--v:${x.v}` }, cellText(x));
+  if (x) return h("td", { ...attrs, class: attrs.class + (x.miss ? " miss" : ""), style: S.exp.view.overlay === "cost" ? "" : `--v:${x.v}` }, cellText(x));
   if (errorInfo) return h("td", { ...attrs, class: attrs.class + " failed", title: errorInfo.error, "aria-label": "failed: " + errorInfo.error }, "!");
   return h("td", { ...attrs, class: attrs.class + " empty", title: "not run yet" }, "·");
 }
@@ -489,18 +533,21 @@ function drawGrid() {
 
 function mainTable(result) {
   const e = S.exp, v = e.view;
-  const showComp = result.columns.length >= 2, showLabel = e.rows.some(r => r.label != null);
+  const showComp = result.columns.length >= 2, labels = hasLabels();
   const rows = result.rows.slice(0, S.limit);
-  const statRow = (title, fn, compFn) => h("tr", {}, h("th", { scope: "row" }, title),
-    result.columns.map(c => h("td", { class: "num" }, fn(c.stats))), showComp && h("td", { class: "num" }, compFn ? compFn(result.compositeStats) : ""),
-    h("td", {}), showLabel && h("td", {}));
+  // fn(stats, metrics, best) per column; the composite gets the same with its own numbers
+  const statRow = (title, fn, attrs = {}) => h("tr", attrs, h("th", { scope: "row" }, title),
+    result.columns.map(c => h("td", { class: "num" }, fn(c.stats, c.metrics, c.best))),
+    showComp && h("td", { class: "num" }, fn(result.compositeStats, result.compositeMetrics, result.compositeBest)),
+    h("td", {}), h("td", {}));
+  const mean = s => (s.mean == null ? "—" : fmtProb(s.mean));
   const table = h("table", { class: "grid", "aria-label": "Results matrix" },
     h("thead", {}, h("tr", {},
       h("th", { scope: "col", class: "inputh" }, `input (${result.rows.length} of ${e.rows.length})`),
       result.columns.map(colHeader),
       showComp && h("th", { scope: "col" }, "composite"),
       h("th", { scope: "col" }, "spread"),
-      showLabel && h("th", { scope: "col" }, "label"))),
+      h("th", { scope: "col" }, "label"))),
     h("tbody", {}, rows.map(r => {
       const err = S.rowErrors[r.key];
       return h("tr", {},
@@ -511,16 +558,21 @@ function mainTable(result) {
           h("button", { class: "link tiny rm", type: "button", "aria-label": `Remove input ${r.input}`,
             onclick: () => saveDoc({ rows: e.rows.filter(x => x.key !== r.key) }) }, "✕")),
         result.columns.map(c => cellTd(r.key, c.key, r.values[c.key], err && err.columns.includes(c.col.key) ? err : null)),
-        showComp && h("td", { class: "cell comp", style: r.composite == null ? "" : `--v:${r.composite}` },
-          r.composite == null ? "—" : [h("span", { class: "v" }, fmtProb(r.composite)), h("span", { class: `tag tag-${r.compositeBand}` }, TAG[r.compositeBand])]),
+        showComp && h("td", { class: "cell comp" + (r.compositeMiss ? " miss" : ""), style: r.composite == null ? "" : `--v:${r.composite}` },
+          r.composite == null ? "—" : [h("span", { class: "v" }, fmtProb(r.composite)),
+                                       h("span", { class: `tag tag-${r.compositeBand}` }, TAG[r.compositeBand]), missMark(r.compositeMiss)]),
         h("td", { class: "num" }, r.spread == null ? "—" : r.spread.toFixed(2)),
-        showLabel && h("td", {}, r.label ?? "—"));
+        labelCell(r));
     })),
     h("tfoot", {},
-      statRow("mean", s => (s.mean == null ? "—" : fmtProb(s.mean)), s => (s.mean == null ? "—" : fmtProb(s.mean))),
-      statRow("yes / review / no", s => `${s.yes}/${s.review}/${s.no}`, s => `${s.yes}/${s.review}/${s.no}`),
+      statRow("mean", mean),
+      statRow("yes / review / no", s => `${s.yes}/${s.review}/${s.no}`),
+      labels && statRow(e.type === "score" ? "acc (n)" : "acc (n) · review", (s, m) => accText(m)),
+      labels && e.type !== "score" && statRow(h("abbr", { title: "correct yes / correct no / false yes / false no / in review" },
+                                                "✓y/✓n/✗y/✗n/rev"), (s, m) => confText(m)),
+      labels && statRow(e.type === "score" ? "MAE (levels)" : "best thr · Brier", (s, m, b) => calText(m, b)),
       result.columns.length >= 2 && h("tr", {}, h("th", { scope: "row" }, "agreement"),
-        h("td", { colspan: result.columns.length + 2 + (showComp ? 1 : 0) + (showLabel ? 1 : 0), class: "muted small" },
+        h("td", { colspan: result.columns.length + 3 + (showComp ? 1 : 0), class: "muted small" },
           result.agreement == null ? "—" : `${fmtProb(result.agreement)} of rows have every variant in the same band`))));
   const more = result.rows.length > S.limit && h("button", { type: "button", onclick: () => { S.limit += 200; drawGrid(); } },
     `Show more (${result.rows.length - S.limit} hidden)`);

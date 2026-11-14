@@ -391,6 +391,15 @@ def delete_experiment(conn, exp_id) -> bool:
         return conn.execute("DELETE FROM experiments WHERE id = ?", (exp_id,)).rowcount > 0
 
 
+def totals(conn, session_start) -> dict:
+    """Runs and cost since session_start and for all time. unknown = ok runs with no cost (no token count)."""
+    def since(t):
+        n, cost, unknown = conn.execute("SELECT count(*), sum(cost_usd), sum(cost_usd IS NULL AND status = 'ok')"
+                                        " FROM runs WHERE created_at >= ?", (t,)).fetchone()
+        return {"runs": n, "cost_usd": cost or 0.0, "unknown_cost_runs": unknown or 0}
+    return {"session": since(session_start), "all_time": since("")}
+
+
 def experiment_cells(conn, exp) -> dict:
     """Latest ok answer per (row, column, model), found by content hash. Shape: contracts/http-api.md."""
     by_input = {r["input_hash"]: r["key"] for r in exp["rows"]}

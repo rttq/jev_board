@@ -154,10 +154,10 @@ Single Python package at repo root: `jevbench/` (server + `jevbench/static/` pag
 
 **Independent Test**: 3 single runs and a 5 × 2 grid: the session total = the sum of runs, and the experiment total = the sum of its rows.
 
-- [ ] T051 [US7] Implement `totals(conn, session_start)` in `jevbench/store.py` → `{session, all_time}`, each `{runs, cost_usd, unknown_cost_runs}` (unknown = ok runs with null cost), and the `GET /api/totals` route in `jevbench/server.py`
-- [ ] T052 [US7] Add tests in `tests/test_core.py`: totals equal the sums; null-token runs are counted in `unknown_cost_runs` and excluded from the sum; changing `price_per_mtok` does not change the cost of existing runs
-- [ ] T053 [US7] In `jevbench/static/app.js`, show header totals (`session $… · N runs`, all-time on hover/expand, "N unknown" when > 0) refreshed after every run and grid row
-- [ ] T054 [US7] Build the Settings view in `jevbench/static/app.js` (`#/settings`): theme, text size, probability format + decimals, default model, price per Mtok (with a note that it applies to new runs only), parallelism, and "Reset to defaults" (confirm). It saves via `PUT /api/prefs` and applies theme and scale immediately
+- [X] T051 [US7] Implement `totals(conn, session_start)` in `jevbench/store.py` → `{session, all_time}`, each `{runs, cost_usd, unknown_cost_runs}` (unknown = ok runs with null cost), and the `GET /api/totals` route in `jevbench/server.py`
+- [X] T052 [US7] Add tests in `tests/test_core.py`: totals equal the sums; null-token runs are counted in `unknown_cost_runs` and excluded from the sum; changing `price_per_mtok` does not change the cost of existing runs
+- [X] T053 [US7] In `jevbench/static/app.js`, show header totals (`session $… · N runs`, all-time on hover/expand, "N unknown" when > 0) refreshed after every run and grid row
+- [X] T054 [US7] Build the Settings view in `jevbench/static/app.js` (`#/settings`): theme, text size, probability format + decimals, default model, price per Mtok (with a note that it applies to new runs only), parallelism, and "Reset to defaults" (confirm). It saves via `PUT /api/prefs` and applies theme and scale immediately
 
 **Checkpoint**: Costs are visible everywhere
 

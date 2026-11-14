@@ -159,6 +159,7 @@ ROUTES = [
     ("GET", r"/api/prefs", h_get_prefs),
     ("PUT", r"/api/prefs", h_put_prefs),
     ("POST", r"/api/prefs/reset", h_reset_prefs),
+    ("GET", r"/api/totals", lambda ctx, p, q, b: (200, store.totals(ctx["conn"], ctx["started_at"]))),
     ("POST", r"/api/runs", h_post_run),
     ("GET", r"/api/runs/(\d+)", h_get_run),
     ("GET", r"/api/experiments", h_list_exps),

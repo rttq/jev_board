@@ -28,8 +28,25 @@ export async function api(method, path, body) {
     throw { status: 0, error: "Cannot reach the jevbench server. Is it still running in the terminal?" };
   }
   const data = res.status === 204 ? null : await res.json().catch(() => null);
+  if (method === "POST" && path === "/api/runs") refreshTotalsSoon();  // every caller that spends money
   if (!res.ok) throw { status: res.status, ...(data || { error: res.statusText }) };
   return data;
+}
+
+// ---------- header totals ----------
+let totalsTimer = null;
+// throttle, not debounce: rows of a grid run finish back to back and must not postpone the update forever
+function refreshTotalsSoon() { totalsTimer ??= setTimeout(() => { totalsTimer = null; refreshTotals(); }, 150); }
+
+export async function refreshTotals() {
+  const el = document.getElementById("totals");
+  let t;
+  try { t = await api("GET", "/api/totals"); } catch { return; }
+  const part = (x, label) => `${label}${fmtUSD(x.cost_usd)} · ${x.runs} run${x.runs === 1 ? "" : "s"}` +
+    (x.unknown_cost_runs ? ` · ${x.unknown_cost_runs} unknown` : "");
+  el.textContent = part(t.session, "session ");
+  el.title = part(t.all_time, "all time ") +
+    (t.all_time.unknown_cost_runs ? "\n“unknown” = runs with no token count, left out of the cost" : "");
 }
 
 // ---------- app state ----------
@@ -77,6 +94,19 @@ function showBanner() {
   }
   if (app.status.notice) b.append(h("p", {}, app.status.notice));
   b.hidden = !b.childElementCount;
+}
+
+export function confirmDialog(title, body, ok = "Confirm") {
+  const dlg = document.getElementById("dlg");
+  return new Promise(resolve => {
+    const done = v => { dlg.close(); resolve(v); };
+    dlg.replaceChildren(h("h1", {}, title), h("p", {}, body),
+      h("div", { class: "actions" }, h("span", { style: "flex:1" }),
+        h("button", { type: "button", onclick: () => done(false) }, "Cancel"),
+        h("button", { type: "button", class: "primary", onclick: () => done(true) }, ok)));
+    dlg.onclose = () => resolve(false);
+    dlg.showModal();
+  });
 }
 
 // ---------- router ----------
@@ -371,6 +401,63 @@ function renderRun(view) {
 }
 registerView("run", renderRun);
 
+// ---------- Settings view ----------
+async function renderSettings(view) {
+  const els = {};
+  const status = h("span", { class: "muted small", role: "status" });
+  const preview = h("span", { class: "muted small" });
+  const showPreview = () => { preview.textContent = `0.7345 shows as ${fmtProb(0.7345)}`; };
+  async function save(key, value) {
+    try {
+      app.prefs = await api("PUT", "/api/prefs", { ...app.prefs, [key]: value });
+      applyPrefs();
+      for (const [k, el] of Object.entries(els)) el.value = String(app.prefs[k]);  // the server may clamp
+      showPreview();
+      status.textContent = "Saved.";
+    } catch (err) { status.textContent = err.error || String(err); }
+  }
+  const field = (key, label, el, { num = false, note } = {}) => {
+    els[key] = el; el.id = "pref-" + key;
+    el.addEventListener("change", () => save(key, num ? Number(el.value) : el.value));
+    return [h("label", { for: el.id }, label), h("div", {}, el, note && h("p", { class: "muted small", style: "margin:4px 0 0" }, note))];
+  };
+  const select = (key, opts) => h("select", {}, opts.map(([v, t]) => h("option", { value: v, selected: String(app.prefs[key]) === v }, t)));
+  const number = (key, attrs) => h("input", { type: "number", value: app.prefs[key], style: "width:7em", ...attrs });
+  const models = [...new Set([app.prefs.default_model, ...app.status.models])];
+  showPreview();
+
+  const totalsBox = h("p", { class: "small" }, "…");
+  api("GET", "/api/totals").then(t => {
+    const line = (x, label) => h("div", {}, h("strong", {}, label), ` ${fmtUSD(x.cost_usd)} · ${x.runs} run${x.runs === 1 ? "" : "s"}`,
+      x.unknown_cost_runs ? h("span", { class: "muted" }, ` · ${x.unknown_cost_runs} with unknown cost (no token count), not in the sum`) : "");
+    totalsBox.replaceChildren(line(t.session, "This session"), line(t.all_time, "All time"));
+  }).catch(err => { totalsBox.textContent = err.error; });
+
+  view.append(h("div", { class: "panel stack settings" },
+    h("div", { class: "row" }, h("h1", { style: "margin:0" }, "Settings"), h("span", { style: "flex:1" }), status),
+    h("h2", {}, "Display"),
+    h("div", { class: "settings-grid" },
+      ...field("theme", "Theme", select("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])),
+      ...field("text_scale", "Text size", select("text_scale", [["0.85", "Small"], ["1", "Normal"], ["1.15", "Large"], ["1.3", "Larger"], ["1.5", "Largest"]]), { num: true }),
+      ...field("prob_format", "Probabilities as", select("prob_format", [["percent", "Percent (73%)"], ["fraction", "Fraction (0.73)"]])),
+      ...field("prob_decimals", "Extra decimals", number("prob_decimals", { min: 0, max: 4, step: 1 }), { num: true }),
+      h("span", {}), preview),
+    h("h2", {}, "Runs"),
+    h("div", { class: "settings-grid" },
+      ...field("default_model", "Default model", select("default_model", models.map(m => [m, m]))),
+      ...field("concurrency", "Parallel requests", number("concurrency", { min: 1, max: 8, step: 1 }), { num: true,
+        note: "How many rows a matrix run sends at once (1–8)." }),
+      ...field("price_per_mtok", "Price per million input tokens (USD)", number("price_per_mtok", { min: 0, step: "any" }), { num: true,
+        note: "Applies to new runs only. Recorded runs keep the price they were charged at." })),
+    h("h2", {}, "Cost"), totalsBox,
+    h("p", { class: "muted small" }, "Data folder: ", h("code", {}, app.status.data_dir), " · API key from ", h("code", {}, app.status.key_file)),
+    h("div", { class: "row" }, h("button", { type: "button", onclick: async () => {
+      if (!(await confirmDialog("Reset settings?", "All settings go back to their defaults. Runs and experiments are not touched.", "Reset"))) return;
+      app.prefs = await api("POST", "/api/prefs/reset"); applyPrefs(); route();
+    } }, "Reset to defaults"))));
+}
+registerView("settings", renderSettings);
+
 // ---------- result renderers ----------
 function barLine(label, p, top) {
   return h("div", { class: "barline" + (top ? " is-top" : "") },
@@ -454,6 +541,7 @@ async function boot() {
   }
   applyPrefs();
   showBanner();
+  refreshTotals();
   await import("./experiments.js");  // registers its views; loaded after app.js so the import cycle is safe
   addEventListener("hashchange", route);
   route();

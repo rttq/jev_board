@@ -1,5 +1,5 @@
 // Experiments: list, setup, and the matrix dashboard. Live controls re-render from applyView with no fetch.
-import { h, api, app, registerView, fmtProb, fmtUSD, choiceEditor, levelsEditor, renderAnswer, TYPE_LABEL } from "./app.js";
+import { h, api, app, registerView, fmtProb, fmtUSD, choiceEditor, levelsEditor, renderAnswer, TYPE_LABEL, confirmDialog } from "./app.js";
 import { applyView, transpose } from "./metrics.js";
 
 const DEFAULT_VIEW = {
@@ -10,19 +10,6 @@ const DEFAULT_VIEW = {
 const clone = x => JSON.parse(JSON.stringify(x));
 const vname = key => key.replace(/^c/, "v").replace(/@.*/, "");
 const TAG = { yes: "YES", review: "REV", no: "NO" };
-
-function confirmDialog(title, body, ok = "Confirm") {
-  const dlg = document.getElementById("dlg");
-  return new Promise(resolve => {
-    const done = v => { dlg.close(); resolve(v); };
-    dlg.replaceChildren(h("h1", {}, title), h("p", {}, body),
-      h("div", { class: "actions" }, h("span", { style: "flex:1" }),
-        h("button", { type: "button", onclick: () => done(false) }, "Cancel"),
-        h("button", { type: "button", class: "primary", onclick: () => done(true) }, ok)));
-    dlg.onclose = () => resolve(false);
-    dlg.showModal();
-  });
-}
 
 // ---------- list ----------
 async function renderList(view) {

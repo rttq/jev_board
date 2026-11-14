@@ -218,6 +218,21 @@ class TestRunFlow(Base):
         self.assertAlmostEqual(store.get_run(self.conn, r1["id"])["cost_usd"], 118 * 0.042 / 1e6)
         self.assertAlmostEqual(r2["cost_usd"], 118 / 1e6)
 
+    def test_totals_session_all_time_and_unknown(self):
+        ctx = self.ctx()
+        self.post_run(FakeJev(), {"input": APPLE, "questions": {"q1": NOUL}})  # before this session
+        ctx["started_at"] = store.now()
+        _, a = self.post_run(FakeJev(), {"input": APPLE, "questions": {"q1": NOUL}})
+        _, b = self.post_run(FakeJev(input_tokens=None), {"input": APPLE, "questions": {"q1": NOUL}})
+        self.post_run(FakeJev(fail=(401, {"error": {"message": "bad key"}})), {"input": APPLE, "questions": {"q1": NOUL}})
+        store.put_prefs(self.conn, {"price_per_mtok": 9.0})  # must not change recorded costs
+        st, t = server.dispatch(ctx, "GET", "/api/totals", {}, None)
+        self.assertEqual(st, 200)
+        self.assertEqual(t["session"], {"runs": 3, "cost_usd": a["cost_usd"], "unknown_cost_runs": 1})  # error run: no cost, not unknown
+        self.assertEqual(t["all_time"]["runs"], 4)
+        self.assertAlmostEqual(t["all_time"]["cost_usd"], 2 * 118 * 0.042 / 1e6)
+        self.assertIsNone(b["cost_usd"])
+
 
 class TestExperiments(Base):
     def exp(self, fake=None, **over):

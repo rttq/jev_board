@@ -243,3 +243,48 @@ table.hist td.inp-cell { max-width: 28em; overflow: hidden; text-overflow: ellip
 .prewrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 button.danger { color: var(--no); border-color: var(--no); }
 @media (max-width: 720px) { table.hist th:nth-child(3), table.hist td:nth-child(3), table.hist th:nth-child(5), table.hist td:nth-child(5) { display: none; } }
+
+/* JSON library picker */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+dialog.lib { width: min(1000px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+dialog.lib[open] { display: flex; flex-direction: column; }
+.lib-head h1 { font-size: 1.15rem; }
+.lib-path-row { margin: 6px 0 12px; }
+.lib-folder { max-width: 100%; overflow-wrap: anywhere; background: var(--track); padding: 2px 6px; border-radius: 4px; }
+.lib-body { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); grid-template-rows: minmax(0, 1fr); gap: 12px;
+            height: clamp(240px, calc(100vh - 230px), 640px); flex: 0 1 auto; min-height: 0; }
+.lib-body > * { min-height: 0; }
+dialog.lib > .actions { margin-top: 10px; }
+.lib-list { list-style: none; margin: 0; padding: 4px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+.lib-list:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lib-opt { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+.lib-opt:hover { background: var(--track); }
+.lib-opt.on { background: var(--track); box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+.lib-name { overflow-wrap: anywhere; }
+.lib-empty { padding: 8px; }
+.lib-preview { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 10px 12px; }
+.lib-preview > * + * { margin-top: 10px; }
+.lib-summary { margin: 0; overflow-wrap: anywhere; }
+.lib-warn { margin: 0; padding: 6px 10px; list-style: none; background: var(--warn-bg); border-radius: 4px; font-size: .85rem; }
+.lib-rec select { max-width: 100%; min-width: 0; flex: 1 1 16em; }
+.lib-rec input[type=search] { flex: 0 1 12em; min-width: 8em; }
+.lib-tree { font-size: .9rem; }
+.lib-node > summary { cursor: pointer; }
+.lib-node > summary > .lib-field { display: inline-grid; width: calc(100% - 1.2em); }
+.lib-field { display: grid; grid-template-columns: minmax(6em, 1.2fr) minmax(5em, 1fr) minmax(0, 2fr) auto auto; gap: 8px; align-items: baseline;
+             padding: 3px 0 3px calc(var(--depth, 0) * 1.1em + 1.2em); border-bottom: 1px solid var(--line); }
+.lib-node > summary > .lib-field { padding-left: calc(var(--depth, 0) * 1.1em); }
+.lib-key { overflow-wrap: anywhere; font-weight: 600; }
+.lib-sample { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.lib-sample.prewrap { overflow: visible; }
+.lib-raw { margin: 0; max-height: 50vh; overflow: auto; font-size: .82rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.lib-q { padding: 10px; }
+.lib-q ul, .lib-q ol { margin: 4px 0; padding-left: 1.4em; }
+@media (max-width: 700px) {
+  dialog.lib { padding: 12px; }
+  .lib-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); height: auto; flex: 1 1 auto; }
+  .lib-list { max-height: 28vh; }
+  .lib-field { grid-template-columns: minmax(0, 1fr) auto auto; row-gap: 0; }
+  .lib-field > :nth-child(1) { order: 1; } .lib-field > :nth-child(4) { order: 2; } .lib-field > :nth-child(5) { order: 3; }
+  .lib-field > :nth-child(2) { order: 4; grid-column: 1 / -1; } .lib-field > :nth-child(3) { order: 5; grid-column: 1 / -1; }
+}

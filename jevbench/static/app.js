@@ -1,4 +1,5 @@
 // jevbench frontend. Plain ES module, no build. All user text goes through textContent (h()), never innerHTML.
+import { freeId } from "./metrics.js";
 
 // ---------- tiny DOM helper ----------
 export function h(tag, attrs = {}, ...kids) {
@@ -106,14 +107,20 @@ function showBanner() {
 }
 
 export function confirmDialog(title, body, ok = "Confirm") {
+  return choiceDialog(title, body, [[true, ok]]).then(v => v === true);
+}
+
+// buttons: [[value, label], ...]; the last one is the primary. Resolves with the value, or null on Cancel/Escape.
+export function choiceDialog(title, body, buttons) {
   const dlg = document.getElementById("dlg");
   return new Promise(resolve => {
-    const done = v => { dlg.close(); resolve(v); };
+    const done = v => { dlg.onclose = null; dlg.close(); resolve(v); };
     dlg.replaceChildren(h("h1", {}, title), h("p", {}, body),
       h("div", { class: "actions" }, h("span", { style: "flex:1" }),
-        h("button", { type: "button", onclick: () => done(false) }, "Cancel"),
-        h("button", { type: "button", class: "primary", onclick: () => done(true) }, ok)));
-    dlg.onclose = () => resolve(false);
+        h("button", { type: "button", onclick: () => done(null) }, "Cancel"),
+        buttons.map(([v, label], i) => h("button", { type: "button", class: i === buttons.length - 1 ? "primary" : null,
+                                                     onclick: () => done(v) }, label))));
+    dlg.onclose = () => resolve(null);
     dlg.showModal();
   });
 }
@@ -191,8 +198,9 @@ function guideSlot(type) {
 
 const draft = {
   kind: "text", text: "", fields: '{\n  "text": ""\n}', image: null, // {b64, url, name}
-  model: null, questions: [], errors: {}, running: false, result: null,
+  model: null, questions: [], errors: {}, running: false, result: null, inputHint: null, questionsHint: null,
 };
+const FIELDS_STUB = '{\n  "text": ""\n}';
 
 function newQuestion(type) {
   const used = new Set(draft.questions.map(q => q.id));
@@ -213,7 +221,8 @@ function fromWire(id, w) {
 export async function newRun() {
   const dirty = draft.text.trim() || draft.image || draft.questions.some(q => q.instructions.trim());
   if (dirty && !(await confirmDialog("Start a new run?", "The current input and questions are cleared.", "Clear"))) return;
-  Object.assign(draft, { kind: "text", text: "", fields: '{\n  "text": ""\n}', image: null, questions: [], errors: {}, result: null, focus: null });
+  Object.assign(draft, { kind: "text", text: "", fields: FIELDS_STUB, image: null, questions: [], errors: {}, result: null, focus: null,
+                         inputHint: null, questionsHint: null });
   if ((location.hash || "#/run").startsWith("#/run")) route(); else location.hash = "#/run";
 }
 
@@ -370,6 +379,52 @@ async function fitImage(dataUrl, type) {
   return type === "image/png" ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", 0.92);
 }
 
+// ---------- JSON library ----------
+// library.js imports app.js, so it is loaded on first use (like experiments.js) to keep the import cycle safe.
+export async function openLibraryFor(place, onLoad, opts) {
+  const { openLibrary } = await import("./library.js");
+  openLibrary(place, onLoad, opts);
+}
+
+async function loadInput(an, rerender, { index = 0 } = {}) {
+  const record = an.inputs.records[index];
+  const dirty = draft.kind === "text" ? draft.text.trim() : draft.fields.trim() && draft.fields !== FIELDS_STUB;
+  if (dirty && !(await confirmDialog("Replace the input?", `The current input is replaced by ${an.path}` +
+      (an.inputs.records.length > 1 ? ` (record #${index + 1})` : "") + ".", "Replace"))) return;
+  Object.assign(draft, { kind: "json", fields: JSON.stringify(record, null, 2), errors: {}, inputHint: null });
+  // jev.build_state puts the attached image under `image`, so it wins over a field of that name.
+  if (draft.image && Object.hasOwn(record, "image"))
+    draft.inputHint = "This input has its own `image` field. The attached image replaces it when you run; remove the image to keep the field.";
+  rerender();
+}
+
+async function loadQuestions(an, rerender) {
+  const loaded = Object.entries(an.questions).map(([id, q]) => fromWire(id, q.wire));
+  let mode = "replace";
+  if (draft.questions.some(q => q.instructions.trim())) {
+    mode = await choiceDialog("Load questions", `${an.path} has ${loaded.length} question${loaded.length === 1 ? "" : "s"}. ` +
+      "Add them after the current questions, or replace the current ones?", [["add", "Add"], ["replace", "Replace"]]);
+    if (!mode) return;
+  }
+  const renames = [];
+  if (mode === "add") {
+    const kept = draft.questions.filter(q => q.instructions.trim());
+    const taken = new Set(kept.map(q => q.id));
+    for (const q of loaded) {
+      const id = freeId(q.id, taken);
+      if (id !== q.id) { renames.push(`${q.id} → ${id}`); q.id = id; }
+      taken.add(id);
+    }
+    draft.questions = [...kept, ...loaded];
+  } else draft.questions = loaded;
+  const bad = Object.values(an.questions).filter(q => !q.valid).length;
+  draft.questionsHint = [renames.length && `Renamed to keep IDs unique: ${renames.join(", ")}.`,
+                         bad && `${bad} loaded question${bad === 1 ? " has" : "s have"} problems; fix them before running.`]
+    .filter(Boolean).join(" ") || null;
+  Object.assign(draft, { focus: loaded[0]?.id, errors: {}, result: null });
+  rerender();
+}
+
 function inputPanel(rerender) {
   const seg = h("div", { class: "seg", role: "group", "aria-label": "Input kind" },
     ["text", "json"].map(k => h("button", { type: "button", "aria-pressed": String(draft.kind === k),
@@ -396,9 +451,12 @@ function inputPanel(rerender) {
     h("p", { class: "muted small", style: "margin:0" },
       draft.kind === "text" ? "Questions refer to it as `text`." : "Questions refer to fields by name, e.g. `ticket.subject`."),
     box, errText("_input"),
+    draft.inputHint && h("p", { class: "hint" }, draft.inputHint),
     h("div", { class: "row" },
       file,
       h("button", { type: "button", onclick: () => file.click() }, draft.image ? "Replace image" : "Attach image"),
+      h("button", { type: "button", id: "lib-run-input", title: "Load an input file from the JSON library (data/json/inputs)",
+                    onclick: () => openLibraryFor("run-input", (an, extra) => loadInput(an, rerender, extra)) }, "Load JSON"),
       draft.image && h("img", { class: "thumb", src: draft.image.url, alt: "Attached image: " + draft.image.name }),
       draft.image && h("span", { class: "muted small" }, "Refer to it as `image`."),
       draft.image && h("button", { class: "link", type: "button", onclick: () => { draft.image = null; rerender(); } }, "Remove image")));
@@ -445,7 +503,10 @@ function renderRun(view) {
   const editor = h("div", { class: "stack" },
     inputPanel(rerender),
     h("section", { class: "panel stack", "aria-label": "Questions" },
-      h("h2", {}, "Questions"),
+      h("div", { class: "row" }, h("h2", { style: "margin:0" }, "Questions"), h("span", { style: "flex:1" }),
+        h("button", { type: "button", id: "lib-run-questions", title: "Load questions from the JSON library (data/json/questions)",
+                      onclick: () => openLibraryFor("run-questions", an => loadQuestions(an, rerender)) }, "Load questions")),
+      draft.questionsHint && h("p", { class: "hint" }, draft.questionsHint),
       draft.questions.map((q, i) => questionCard(q, i, rerender)),
       errText("_questions"),
       h("div", { class: "actions" },
@@ -631,7 +692,7 @@ async function boot() {
   addEventListener("hashchange", route);
   // Chrome and Opera keep Ctrl+N for a new window and never pass it to the page, so Alt+N does the same.
   addEventListener("keydown", e => {
-    if (e.shiftKey || e.ctrlKey === e.altKey || document.getElementById("dlg").open) return;  // ctrl+alt = AltGr typing
+    if (e.shiftKey || e.ctrlKey === e.altKey || document.querySelector("dialog[open]")) return;  // ctrl+alt = AltGr typing
     const k = e.key.toLowerCase();
     if (k === "h" && e.ctrlKey) { e.preventDefault(); location.hash = "#/history"; }
     else if (k === "n") { e.preventDefault(); location.hash.startsWith("#/experiments") ? experiments.newExperiment() : newRun(); }

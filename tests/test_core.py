@@ -16,7 +16,7 @@ from pathlib import Path
 import httpx2
 import typesafe_sdk as ts
 
-from jevbench import jev, server, store
+from jevbench import jev, library, server, store
 from jevbench.__main__ import load_env
 
 load_env()  # project .env feeds LiveSmoke
@@ -565,6 +565,202 @@ class TestEnvFile(unittest.TestCase):
             finally:
                 for k in ("JB_A", "JB_B"):
                     os.environ.pop(k, None)
+
+
+TICKET = {"ticket": {"subject": "Refund", "priority": 2, "tags": ["billing"]}}
+TRIAGE = {
+    "urgent": {"type": "noul", "instructions": "Is the customer blocked right now?",
+               "criteria": {"true": "cannot use the product", "false": "a question or a wish"}},
+    "area": {"type": "choice", "instructions": "Which team owns `ticket.subject`?",
+             "criteria": {"billing": "money, invoices, refunds", "tech": None, "sales": None}},
+    "mood": {"type": "score", "instructions": "How upset is the customer?", "criteria": ["calm", "annoyed", "angry"]},
+}
+
+
+class TestLibrary(Base):
+    """data/json library: listing, containment, strict reading, field tree, question checks (SC-003 set)."""
+
+    def write(self, kind, rel, data):
+        p = self.data / "json" / kind / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data if isinstance(data, bytes) else data.encode("utf-8"))
+        return p
+
+    def wj(self, kind, rel, obj):
+        return self.write(kind, rel, json.dumps(obj, ensure_ascii=False))
+
+    def an(self, kind, rel):
+        return library.analyze(self.data, kind, rel)
+
+    def get(self, url, **query):
+        return server.dispatch(self.ctx(), "GET", url, {k: [v] for k, v in query.items()}, None)
+
+    # --- foundation ---
+    def test_listing_creates_folders_lists_nested_json_only_sorted(self):
+        st, out = self.get("/api/library/inputs")
+        self.assertEqual((st, out["files"]), (200, []))
+        self.assertTrue((self.data / "json" / "questions").is_dir())
+        self.write("inputs", "b.json", "{}")
+        self.write("inputs", "A/z.JSON", "{}")
+        self.write("inputs", "notes.txt", "x")
+        self.write("inputs", "big.json", b" " * (library.MAX_BYTES + 1))
+        files = self.get("/api/library/inputs")[1]["files"]
+        self.assertEqual([f["path"] for f in files], ["A/z.JSON", "b.json", "big.json"])
+        self.assertEqual([f["too_large"] for f in files], [False, False, True])
+        self.assertEqual(self.get("/api/library/other")[0], 404)
+
+    def test_paths_must_stay_inside_the_folder(self):
+        self.write("inputs", "ok.json", "{}")
+        (self.data / "json" / "secret.json").write_text("{}")
+        for bad in ("../secret.json", str(self.data / "json" / "secret.json"), "/ok.json", "ok.txt", "", "C:ok.json"):
+            with self.subTest(bad=bad):
+                st, out = self.get("/api/library/inputs/file", path=bad)
+                self.assertEqual((st, out["field"]), (400, "path"))
+        self.assertEqual(self.get("/api/library/inputs/file", path="gone.json")[0], 404)
+        self.assertEqual(self.get("/api/library/inputs/file", path="ok.json")[0], 200)
+
+    def test_link_pointing_outside_is_neither_listed_nor_read(self):
+        outside = self.data / "outside.json"
+        outside.write_text("{}")
+        link = library.root(self.data, "inputs") / "link.json"
+        try:
+            os.symlink(outside, link)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks need extra rights on this system")
+        self.assertEqual(self.get("/api/library/inputs")[1]["files"], [])
+        self.assertEqual(self.get("/api/library/inputs/file", path="link.json")[0], 400)
+
+    def test_syntax_error_has_line_and_column(self):
+        self.write("inputs", "bad.json", '{\n  "a": 1,\n  "b": 2\n  "c": 3\n}')
+        out = self.an("inputs", "bad.json")
+        self.assertFalse(out["ok"])
+        self.assertEqual((out["error"]["line"], out["error"]["col"]), (4, 3))
+        self.assertTrue(out["pretty"].startswith('{\n  "a": 1'))  # raw text shown, so line 4 can be found
+
+    # --- US1 ---
+    def test_object_file_is_one_record_identical_to_the_file(self):
+        rec = {"z": 1, "a": {"имя": "Ольга", "emoji": "🙂", "list": [{"x": None}, True, 1.5, -3]}}
+        self.wj("inputs", "one.json", rec)
+        out = self.an("inputs", "one.json")
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["inputs"]["shape"], "object")
+        self.assertEqual(out["inputs"]["records"], [rec])
+        self.assertEqual(list(out["inputs"]["records"][0]), ["z", "a"])  # key order kept
+        self.assertEqual(json.loads(out["pretty"]), rec)
+
+    def test_list_file_and_rejected_shapes(self):
+        self.wj("inputs", "three.json", [{"n": 1}, {"n": 2}, {"n": 3}])
+        out = self.an("inputs", "three.json")
+        self.assertEqual((out["inputs"]["shape"], [r["n"] for r in out["inputs"]["records"]]), ("list", [1, 2, 3]))
+        for name, value, msg in (("empty.json", [], "holds no records"), ("mixed.json", [{}, 5], "item 2 is a number"),
+                                 ("text.json", "hello", "top level is a text")):
+            with self.subTest(name=name):
+                self.wj("inputs", name, value)
+                out = self.an("inputs", name)
+                self.assertFalse(out["ok"])
+                self.assertIn(msg, out["error"]["message"])
+
+    # --- US2 ---
+    def test_field_tree_paths_types_samples_counts(self):
+        self.wj("inputs", "t.json", TICKET)
+        out = self.an("inputs", "t.json")["inputs"]
+        self.assertEqual(out["fields"], [
+            {"path": "ticket", "type": "object", "count": 1},
+            {"path": "ticket.subject", "type": "text", "count": 1, "sample": "Refund"},
+            {"path": "ticket.priority", "type": "number", "count": 1, "sample": 2},
+            {"path": "ticket.tags", "type": "list", "count": 1, "items": {"n": 1, "type": "text"}},
+        ])
+        self.assertEqual(out["depth"], 3)
+
+    def test_field_tree_over_records_partial_mixed_and_list_items(self):
+        recs = [{"ticket": {"priority": 1}, "messages": [{"author": "a"}]},
+                {"ticket": {"priority": "high"}, "messages": []},
+                {"ticket": {}, "late": True}]
+        self.wj("inputs", "r.json", recs)
+        f = {d["path"]: d for d in self.an("inputs", "r.json")["inputs"]["fields"]}
+        self.assertEqual(f["ticket.priority"]["count"], 2)
+        self.assertEqual((f["ticket.priority"]["type"], f["ticket.priority"]["types"]), ("mixed", ["number", "text"]))
+        self.assertEqual(f["messages[].author"]["count"], 1)
+        self.assertEqual(f["late"]["count"], 1)
+        order = list(f)
+        self.assertLess(order.index("ticket.priority"), order.index("messages"))  # children stay under their parent
+
+    # --- US3 ---
+    def test_list_records_become_experiment_rows_unchanged(self):
+        recs = [{"t": "a", "n": 1}, {"t": "b", "nested": {"x": [1, 2]}}, {"t": "a", "n": 1}]
+        self.wj("inputs", "rows.json", recs)
+        records = self.an("inputs", "rows.json")["inputs"]["records"]
+        st, out = server.dispatch(self.ctx(), "POST", "/api/experiments", {}, {
+            "name": "lib", "type": "noul", "rows": [{"input": {"kind": "json", "fields": r}} for r in records]})
+        self.assertEqual(st, 200)
+        self.assertEqual([r["input"]["fields"] for r in out["experiment"]["rows"]], recs[:2])
+        self.assertTrue(any("merged" in w for w in out["warnings"]))
+
+    # --- US4 ---
+    def test_question_file_valid_invalid_and_box_note(self):
+        self.wj("questions", "triage.json", TRIAGE)
+        out = self.an("questions", "triage.json")
+        self.assertTrue(out["ok"])
+        self.assertEqual(list(out["questions"]), ["urgent", "area", "mood"])
+        self.assertEqual({k: v["wire"] for k, v in out["questions"].items()}, TRIAGE)
+        self.assertTrue(all(v["valid"] for v in out["questions"].values()))
+        self.wj("questions", "mixed.json", {"one": {"type": "choice", "instructions": "x", "criteria": {"a": None}},
+                                            "box": {"type": "box", "instructions": "Where is the cat?"}})
+        q = self.an("questions", "mixed.json")["questions"]
+        self.assertEqual((q["one"]["valid"], q["one"]["errors"]), (False, ["a Choice needs at least 2 options"]))
+        self.assertEqual((q["box"]["valid"], q["box"]["notes"]), (True, [library.BOX_NOTE]))
+
+    def test_question_file_structural_rejections(self):
+        cases = (("list.json", [TRIAGE["urgent"]], "top level is a list"),
+                 ("noinstr.json", {"q1": {"type": "noul"}}, "`q1` has no instructions"),
+                 ("unwrapped.json", {"type": "noul", "instructions": "x"}, '{"my_id"'),
+                 ("badtype.json", {"q1": {"type": "rank", "instructions": "x"}}, "type 'rank'"),
+                 ("notobj.json", {"q1": "Is it?"}, "`q1` is a text"),
+                 ("none.json", {}, "no questions"))
+        for name, value, msg in cases:
+            with self.subTest(name=name):
+                self.wj("questions", name, value)
+                out = self.an("questions", name)
+                self.assertFalse(out["ok"])
+                self.assertIn(msg, out["error"]["message"])
+
+    # --- US5: the SC-003 set (with the files above, well over 20) ---
+    def test_reading_rules(self):
+        deep = '{"a": ' * 100_000 + "1" + "}" * 100_000
+        cases = [  # (name, bytes, ok, error substring, warning substring)
+            ("bom.json", b"\xef\xbb\xbf" + '{"a": "б"}'.encode(), True, None, None),
+            ("u16le.json", '{"a": 1}'.encode("utf-16"), False, "UTF-16", None),
+            ("u16be.json", b"\xfe\xff" + '{"a": 1}'.encode("utf-16-be"), False, "UTF-16", None),
+            ("latin1.json", '{"a": "café"}'.encode("latin-1"), False, "not UTF-8 (first bad byte at position 10)", None),
+            ("unicode.json", '{"имя": "Ольга 🙂"}'.encode(), True, None, None),
+            ("nan.json", b'{"a": "NaN in text",\n "b": NaN}', False, "NaN/Infinity", None),
+            ("inf.json", b'[{"a": -Infinity}]', False, "NaN/Infinity", None),
+            ("dup.json", b'{"a": 1, "a": 2, "b": {"c": 1, "c": 1}}', True, None, "key `a` appears twice"),
+            ("bigint.json", b'{"id": 12345678901234567890}', True, None, "12345678901234567890 becomes 12345678901234567000"),
+            ("floats.json", b'{"a": 1.5e300, "b": -0, "c": 9007199254740992}', True, None, None),
+            ("deep.json", deep.encode(), False, "nested too deeply", None),
+            ("empty.json", b"", False, "file is empty", None),
+            ("blank.json", b" \r\n\t ", False, "file is empty", None),
+            ("emptyobj.json", b"{}", True, None, "record 1 has no fields"),
+            ("looksq.json", json.dumps(TRIAGE).encode(), True, None, "looks like a question file"),
+            ("surrogate.json", b'{"a": "\\ud800"}', False, "lone surrogate", None),
+            ("toolarge.json", b'{"a": "' + b"x" * library.MAX_BYTES + b'"}', False, "the limit is 1 MB", None),
+        ]
+        for name, data, ok, err, warn in cases:
+            with self.subTest(name=name):
+                self.write("inputs", name, data)
+                out = self.an("inputs", name)
+                self.assertEqual(out["ok"], ok, out["error"])
+                if err:
+                    self.assertIn(err, out["error"]["message"])
+                if warn:
+                    self.assertTrue(any(warn in w for w in out["warnings"]), out["warnings"])
+                if ok and not warn:
+                    self.assertEqual(out["warnings"], [])
+        nan = self.an("inputs", "nan.json")["error"]
+        self.assertEqual((nan["line"], nan["col"]), (2, 7))  # the real NaN, not the one inside a string
+        self.assertEqual(self.an("inputs", "bom.json")["inputs"]["records"], [{"a": "б"}])
+        self.assertEqual(self.an("inputs", "bigint.json")["inputs"]["records"][0]["id"], 12345678901234567890)
 
 
 @unittest.skipUnless(os.environ.get("TYPESAFE_API_KEY") and os.environ.get("JEVBENCH_LIVE") == "1",

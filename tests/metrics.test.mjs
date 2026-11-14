@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cellValue, band, spread, columnStats, composite, agreement, costShare, applyView, transpose,
-         labelMetrics, bestThreshold, isMiss, matrixCsv }
+         labelMetrics, bestThreshold, isMiss, matrixCsv,
+         recordSummary, freeId, matchQuestions }
   from "../jevbench/static/metrics.js";
 
 const T = { low: 0.5, high: 0.8 };
@@ -183,4 +184,52 @@ test("matrixCsv: one row per visible input, values, composite, spread, label, th
   assert.deepEqual(row("n").slice(3, 6), ["2", "2", "2"]);
   assert.deepEqual(row("accuracy").slice(3, 5), ["1", "1"]);  // r1 c1 is review → excluded; the rest correct
   assert.ok(row("best_threshold") && row("brier"));
+});
+
+test("recordSummary: first text depth-first, cut to 80, else compact JSON", () => {
+  assert.equal(recordSummary({ ticket: { priority: 2, subject: "Refund" } }), "subject: Refund");
+  assert.equal(recordSummary({ a: [" ", { b: "x\n y" }] }), "b: x y");
+  const long = recordSummary({ t: "w".repeat(200) });
+  assert.equal(long.length, 80);
+  assert.ok(long.endsWith("…"));
+  assert.equal(recordSummary({ n: 1, ok: true }), '{"n":1,"ok":true}');
+  assert.equal(recordSummary({}), "{}");
+});
+
+test("freeId adds the first free suffix", () => {
+  assert.equal(freeId("urgency", new Set()), "urgency");
+  assert.equal(freeId("urgency", new Set(["urgency"])), "urgency_2");
+  assert.equal(freeId("urgency", new Set(["urgency", "urgency_2"])), "urgency_3");
+});
+
+const Q = (wire, valid = true) => ({ wire, valid, errors: valid ? [] : ["bad"] });
+const ABC = { a: null, b: "bee", c: null };
+const QS = {
+  n1: Q({ type: "noul", instructions: "Yes?" }),
+  c1: Q({ type: "choice", instructions: "Which?", criteria: ABC }),
+  c2: Q({ type: "choice", instructions: "Pick one", criteria: { c: null, b: "bee", a: null } }),
+  c3: Q({ type: "choice", instructions: "Other", criteria: { x: null, y: null } }),
+  bx: Q({ type: "box", instructions: "Where?" }),
+};
+
+test("matchQuestions: matching experiment keeps same criteria in any key order", () => {
+  const m = matchQuestions({ type: "choice", criteria: ABC, columns: [{ key: "c1" }] }, QS);
+  assert.deepEqual(m.columns, [{ instructions: "Which?" }, { instructions: "Pick one" }]);
+  assert.deepEqual(m.skipped.map(s => [s.id, s.reason]), [
+    ["n1", "other type (noul)"], ["c3", "other criteria"], ["bx", "Box is single-run only"]]);
+});
+
+test("matchQuestions: empty experiment adopts the first usable question", () => {
+  const m = matchQuestions({ type: "noul", criteria: null, columns: [] },
+                           { bx: QS.bx, bad: Q({ type: "choice", instructions: "?", criteria: { a: null } }, false), c1: QS.c1, c2: QS.c2 });
+  assert.equal(m.type, "choice");
+  assert.deepEqual(m.criteria, ABC);
+  assert.equal(m.columns.length, 2);
+  assert.deepEqual(m.skipped.map(s => s.id), ["bx", "bad"]);
+});
+
+test("matchQuestions: Noul with no criteria matches undefined or null", () => {
+  const m = matchQuestions({ type: "noul", criteria: null, columns: [{}] },
+                           { a: Q({ type: "noul", instructions: "A?" }), b: Q({ type: "noul", instructions: "B?", criteria: null }) });
+  assert.equal(m.columns.length, 2);
 });

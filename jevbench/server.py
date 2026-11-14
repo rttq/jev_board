@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import parse_qs, urlparse
 
-from . import jev, store
+from . import jev, library, store
 
 STATIC = Path(__file__).parent / "static"
 STATIC_MODELS = ["jev-latest", "jev-preview", "jev-1.14.0", "jev-1.13.0"]
@@ -216,8 +216,33 @@ def h_plan_exp(ctx, params, query, body):
     return 200, store.experiment_plan(ctx["conn"], _exp(ctx, params[0]), model, price)
 
 
+def h_lib_list(ctx, params, query, body):
+    return 200, library.list_files(ctx["data_dir"], params[0])
+
+
+def h_lib_file(ctx, params, query, body):
+    try:
+        return 200, library.analyze(ctx["data_dir"], params[0], (query.get("path") or [""])[0])
+    except ValueError as e:
+        raise ApiError(400, str(e), "path")
+    except FileNotFoundError:
+        raise ApiError(404, "file not found", "path")
+    except OSError as e:
+        raise ApiError(500, f"cannot read the file: {e}", "path")
+
+
+def h_lib_reveal(ctx, params, query, body):
+    try:
+        return 200, library.reveal(ctx["data_dir"], params[0])
+    except OSError as e:
+        raise ApiError(500, f"could not open the folder: {e}")
+
+
 ROUTES = [
     ("GET", r"/api/status", h_status),
+    ("GET", r"/api/library/(inputs|questions)", h_lib_list),
+    ("GET", r"/api/library/(inputs|questions)/file", h_lib_file),
+    ("POST", r"/api/library/(inputs|questions)/reveal", h_lib_reveal),
     ("GET", r"/api/prefs", h_get_prefs),
     ("PUT", r"/api/prefs", h_put_prefs),
     ("POST", r"/api/prefs/reset", h_reset_prefs),

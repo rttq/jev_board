@@ -1,6 +1,7 @@
 // Experiments: list, setup, and the matrix dashboard. Live controls re-render from applyView with no fetch.
 import { h, api, app, registerView, fmtProb, fmtUSD, choiceEditor, levelsEditor, renderAnswer, TYPE_LABEL, confirmDialog } from "./app.js";
-import { applyView, transpose, matrixCsv } from "./metrics.js";
+import { applyView, transpose, matrixCsv, recordSummary, matchQuestions } from "./metrics.js";
+import { openLibrary } from "./library.js";
 
 const DEFAULT_VIEW = {
   threshold: { low: 0.5, high: 0.8 }, focus_option: null, sort: { by: "input", dir: "asc" },
@@ -10,6 +11,9 @@ const DEFAULT_VIEW = {
 const clone = x => JSON.parse(JSON.stringify(x));
 const vname = key => key.replace(/^c/, "v").replace(/@.*/, "");
 const TAG = { yes: "YES", review: "REV", no: "NO" };
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+// Matrix label for an applyView row: JSON inputs read as a summary, not raw JSON (search and sort still use r.input).
+const rowLabel = r => (r.row.input.kind === "json" ? recordSummary(r.row.input.fields) : r.input);
 
 // ---------- list ----------
 export async function newExperiment() {
@@ -176,6 +180,31 @@ function labelFrom(s) {
   return S.exp.type === "score" && /^\d+$/.test(s) ? Number(s) : s;
 }
 
+// ---------- JSON library ----------
+async function addLibraryRows(an) {
+  const records = an.inputs.records, before = S.exp.rows.length;
+  if (!(await saveDoc({ rows: [...S.exp.rows, ...records.map(f => ({ input: { kind: "json", fields: f } }))] }))) return;
+  const added = S.exp.rows.length - before, merged = records.length - added;
+  S.setupMsg = [`${plural(added, "row")} added from ${an.path}` + (merged ? ` · ${merged} merged as repeats` : "") + ".",
+                S.exp.reference && records.some(r => Object.hasOwn(r, "reference")) &&
+                  "Rows with their own `reference` field keep it; the shared reference is not used for them."]
+    .filter(Boolean).join(" ");
+  S.openSetup = true; drawAll();
+}
+
+async function addLibraryVariants(an) {
+  const m = matchQuestions(S.exp, an.questions), before = S.exp.columns.length;
+  const patch = { columns: [...S.exp.columns, ...m.columns] };
+  if (!before) Object.assign(patch, { type: m.type, criteria: m.criteria });  // an empty experiment takes the file's question
+  if (!(await saveDoc(patch))) return;
+  S.pendingType = null;
+  const added = S.exp.columns.length - before, merged = m.columns.length - added;
+  S.setupMsg = [`${plural(added, "variant")} added from ${an.path}` + (merged ? ` · ${merged} merged as repeats` : "") + ".",
+                m.skipped.length && "Skipped: " + m.skipped.map(x => `${x.id}: ${x.reason}`).join("; ") + "."]
+    .filter(Boolean).join(" ");
+  S.openSetup = true; drawAll();
+}
+
 async function importFile(file) {
   const text = await file.text();
   let rows;
@@ -242,6 +271,8 @@ function setupPanel() {
             if (lines.length && await saveDoc({ rows: [...e.rows, ...lines.map(l => ({ input: l }))] })) { S.newRows = ""; drawAll(); }
           } }, "Add inputs"),
           file, h("button", { type: "button", onclick: () => file.click() }, "Import .txt / .csv"),
+          h("button", { type: "button", id: "lib-exp-input", title: "Add inputs from the JSON library (data/json/inputs)",
+                        onclick: () => openLibrary("exp-input", addLibraryRows) }, "Load JSON"),
           h("span", { class: "muted small" }, "CSV columns: input, label, tags"))),
       h("section", { class: "stack" },
         h("h2", {}, "Add variant"),
@@ -254,6 +285,10 @@ function setupPanel() {
             const cols = e.columns.map(c => (c.key === S.hideAfter ? { ...c, hidden: true } : c));
             if (await saveDoc({ columns: [...cols, { instructions: S.newCol.trim() }] })) { S.newCol = ""; S.hideAfter = null; drawAll(); }
           } }, "+ variant"),
+          h("button", { type: "button", id: "lib-exp-questions", title: "Add wordings from a question file in the JSON library (data/json/questions)",
+                        onclick: () => openLibrary("exp-questions", addLibraryVariants,
+                                                   { exp: { type: S.exp.type, criteria: S.exp.criteria, columns: S.exp.columns } }) },
+            "Load questions"),
           S.hideAfter && h("label", { class: "small" }, h("input", { type: "checkbox", checked: true,
             onchange: ev => { if (!ev.target.checked) S.hideAfter = null; } }), ` hide ${vname(S.hideAfter)} after adding`)))),
     S.setupErr && h("p", { class: "err-text", role: "alert" }, S.setupErr),
@@ -586,7 +621,7 @@ function mainTable(result) {
       const err = S.rowErrors[r.key];
       return h("tr", {},
         h("th", { scope: "row", class: "inputc" },
-          h("span", { class: "inp", title: r.input }, r.input),
+          h("span", { class: "inp", title: r.input }, rowLabel(r)),
           err && h("button", { class: "link small", type: "button", title: err.error,
             onclick: () => runRequests([{ row: r.key, columns: err.columns }]) }, "Retry"),
           h("button", { class: "link tiny rm", type: "button", "aria-label": `Remove input ${r.input}`,
@@ -618,7 +653,7 @@ function pivotTable(result) {
   const rows = p.columns.slice(0, S.limit);
   return h("div", { class: "grid-scroll" }, h("table", { class: "grid", "aria-label": "Results matrix, pivoted" },
     h("thead", {}, h("tr", {}, h("th", { scope: "col", class: "inputh" }, "variant"),
-      rows.map(c => h("th", { scope: "col", class: "colh" }, h("div", { class: "wording", title: c.row.input }, c.row.input))),
+      rows.map(c => h("th", { scope: "col", class: "colh" }, h("div", { class: "wording", title: c.row.input }, rowLabel(c.row)))),
       h("th", { scope: "col" }, "mean"), h("th", { scope: "col" }, "yes / review / no"))),
     h("tbody", {}, p.rows.map(r => h("tr", {},
       h("th", { scope: "row", class: "inputc" }, h("strong", {}, vname(r.key)), " ", h("span", { class: "inp", title: String(r.col.col.instructions) }, String(r.col.col.instructions))),

@@ -194,3 +194,50 @@ export function matrixCsv(result, exp, compare = false) {
   else { stat("review_rate", (s, m) => num4(m?.reviewRate)); stat("best_threshold", (s, m, b) => num4(b?.t)); stat("brier", (s, m) => num4(m?.brier)); }
   return "\ufeff" + lines.map(l => l.map(csvCell).join(",")).join("\r\n") + "\r\n";
 }
+
+// ---------- JSON library helpers (pure) ----------
+
+// One readable line for a JSON record: the first non-empty text found depth-first, with its key.
+export function recordSummary(fields, max = 80) {
+  const find = (v, key) => {
+    if (typeof v === "string") return v.trim() ? [key, v] : null;
+    if (Array.isArray(v)) { for (const x of v) { const r = find(x, key); if (r) return r; } return null; }
+    if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) { const r = find(x, k); if (r) return r; }
+    return null;
+  };
+  const hit = find(fields, null);
+  const s = (hit ? (hit[0] ? `${hit[0]}: ${hit[1]}` : hit[1]) : JSON.stringify(fields)).replace(/\s+/g, " ").trim();
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+// `id`, or `id_2`, `id_3`… whichever is not in `taken`.
+export function freeId(id, taken) {
+  if (!taken.has(id)) return id;
+  for (let n = 2; ; n++) if (!taken.has(`${id}_${n}`)) return `${id}_${n}`;
+}
+
+const canon = v => (v === undefined ? null : Array.isArray(v) ? v.map(canon)
+  : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, canon(v[k])])) : v);
+const sameCriteria = (a, b) => JSON.stringify(canon(a ?? null)) === JSON.stringify(canon(b ?? null));
+
+// Which questions of a library file can become variants of `exp` ({type, criteria, columns}).
+// questions: {id: {wire, valid, errors}} from the library analysis. An experiment without variants
+// adopts the type and criteria of the first usable question.
+export function matchQuestions(exp, questions) {
+  const usable = q => q.valid !== false && ["noul", "choice", "score"].includes(q.wire.type);
+  let { type, criteria } = exp;
+  if (!exp.columns.length) {
+    const first = Object.values(questions).find(usable);
+    if (first) ({ type, criteria } = first.wire);
+  }
+  const columns = [], skipped = [];
+  for (const [id, q] of Object.entries(questions)) {
+    const w = q.wire;
+    if (w.type === "box") skipped.push({ id, reason: "Box is single-run only" });
+    else if (q.valid === false) skipped.push({ id, reason: "invalid: " + (q.errors || []).join("; ") });
+    else if (w.type !== type) skipped.push({ id, reason: `other type (${w.type})` });
+    else if (!sameCriteria(w.criteria, criteria)) skipped.push({ id, reason: "other criteria" });
+    else columns.push({ instructions: w.instructions });
+  }
+  return { type, criteria: criteria ?? null, columns, skipped };
+}

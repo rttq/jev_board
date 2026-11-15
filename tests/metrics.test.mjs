@@ -2,8 +2,30 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cellValue, band, spread, columnStats, composite, agreement, costShare, applyView, transpose,
          labelMetrics, bestThreshold, isMiss, matrixCsv,
-         recordSummary, freeId, matchQuestions, levelText, levelToEdit, levelFromEdit }
+         recordSummary, freeId, matchQuestions, levelText, levelToEdit, levelFromEdit,
+         kvRows, kvObject, levelToEditor, levelFromEditor }
   from "../jevbench/static/metrics.js";
+
+test("name → value rows: object round trip, kinds, errors", () => {
+  const obj = { answer: "a", tags: ["x", "y"], n: 2, flag: true, nested: { a: 1 }, nums: [1, 2], empty: [] };
+  const rows = kvRows(obj);
+  assert.deepEqual(rows.map(r => r.kind), ["text", "list", "json", "json", "json", "json", "list"]);
+  assert.equal(rows[1].value, "x\ny");
+  assert.deepEqual(kvObject(rows).value, obj);
+  assert.deepEqual(kvObject([{ key: "a", kind: "text", value: "1" }, { key: " ", kind: "text", value: "" },
+                             { key: "l", kind: "list", value: " p \n\n q " }]).value, { a: "1", l: ["p", "q"] });
+  assert.match(kvObject([{ key: "", kind: "text", value: "v" }]).error, /row 1/);
+  assert.match(kvObject([{ key: "a", kind: "text", value: "1" }, { key: "a", kind: "text", value: "2" }]).error, /`a`/);
+  assert.match(kvObject([{ key: "j", kind: "json", value: "{oops" }]).error, /`j`.*JSON/);
+  assert.ok(kvObject([{ key: "", kind: "text", value: "" }]).error);
+  const lvl = { description: "d", examples: ["x"] };
+  assert.equal(levelToEditor("calm").mode, "text");
+  assert.equal(levelToEditor(lvl).mode, "fields");
+  assert.equal(levelToEditor(lvl).rows.length, 2);
+  assert.deepEqual(levelFromEditor(levelToEditor(lvl)).value, lvl);
+  assert.deepEqual(levelFromEditor(levelToEditor("calm")).value, "calm");
+  assert.ok(levelFromEditor({ mode: "text", text: "  ", rows: [] }).error);
+});
 
 test("Score levels: text or object, edited as JSON text", () => {
   const obj = { description: "d", examples: ["x", "y"] };

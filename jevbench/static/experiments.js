@@ -1,6 +1,6 @@
 // Experiments: list, setup, and the matrix dashboard. Live controls re-render from applyView with no fetch.
-import { h, api, app, registerView, fmtProb, fmtUSD, choiceEditor, levelsEditor, renderAnswer, TYPE_LABEL, confirmDialog } from "./app.js";
-import { applyView, transpose, matrixCsv, recordSummary, matchQuestions, levelText, levelToEdit, levelFromEdit } from "./metrics.js";
+import { h, api, app, registerView, fmtProb, fmtUSD, choiceEditor, levelsEditor, kvEditor, renderAnswer, TYPE_LABEL, confirmDialog } from "./app.js";
+import { applyView, transpose, matrixCsv, recordSummary, matchQuestions, levelText, kvRows, kvObject, levelToEditor, levelFromEditor } from "./metrics.js";
 import { openLibrary } from "./library.js";
 
 const DEFAULT_VIEW = {
@@ -62,6 +62,8 @@ async function load(id) {
         setupErr: null, setupMsg: [...(app.flash || []), ...(d.warnings || [])].join(" ") || null, openSetup: !!app.flash?.length, newRows: "", newCol: "", hideAfter: null };
   S.exp.view = { ...clone(DEFAULT_VIEW), ...S.exp.view };
   app.flash = null;
+  const lastJson = [...S.exp.rows].reverse().find(r => r.input?.kind === "json");
+  S.newFields = lastJson ? blankFields(kvRows(lastJson.input.fields)) : [{ key: "text", kind: "text", value: "" }];
   S.crit = critToEditor(S.exp.type, S.exp.criteria);
 }
 
@@ -80,13 +82,13 @@ const hasAnswers = () => Object.keys(S.cells).length > 0;
 
 function critToEditor(type, c) {
   if (type === "choice") return Object.entries(c || { "": null, " ": null }).map(([key, desc]) => ({ key: key.trim(), desc: desc || "" }));
-  if (type === "score") return (c || ["", ""]).map(levelToEdit);
+  if (type === "score") return (c || ["", ""]).map(levelToEditor);
   return { yes: c?.true || "", no: c?.false || "" };
 }
 
 function critFromEditor(type, e) {
   if (type === "choice") return Object.fromEntries(e.filter(o => o.key.trim()).map(o => [o.key.trim(), o.desc.trim() || null]));
-  if (type === "score") return e.map(l => levelFromEdit(l).value);
+  if (type === "score") return e.map(st => levelFromEditor(st).value);
   const c = {};
   if (e.yes.trim()) c.true = e.yes.trim();
   if (e.no.trim()) c.false = e.no.trim();
@@ -180,10 +182,25 @@ function labelFrom(s) {
   return S.exp.type === "score" && /^\d+$/.test(s) ? Number(s) : s;
 }
 
+// The input form keeps field names and kinds between inputs; only the values are cleared.
+const blankFields = rows => rows.map(r => ({ ...r, value: "" }));
+
+async function addFormInput() {
+  const r = kvObject(S.newFields);
+  if (r.error) { S.setupErr = "Input: " + r.error; return drawAll(); }
+  if (await saveDoc({ rows: [...S.exp.rows, { input: { kind: "json", fields: r.value } }] })) { S.newFields = blankFields(S.newFields); drawAll(); }
+}
+
 // ---------- JSON library ----------
 async function addLibraryRows(an) {
   const records = an.inputs.records, before = S.exp.rows.length;
+  if (records.length === 1) {  // one record: fill the form so it can be checked before adding
+    S.newFields = kvRows(records[0]);
+    S.setupMsg = `Form filled from ${an.path}. Check the fields, then click Add input.`;
+    S.openSetup = true; return drawAll();
+  }
   if (!(await saveDoc({ rows: [...S.exp.rows, ...records.map(f => ({ input: { kind: "json", fields: f } }))] }))) return;
+  S.newFields = blankFields(kvRows(records[0]));
   const added = S.exp.rows.length - before, merged = records.length - added;
   S.setupMsg = [`${plural(added, "row")} added from ${an.path}` + (merged ? ` · ${merged} merged as repeats` : "") + ".",
                 S.exp.reference && records.some(r => Object.hasOwn(r, "reference")) &&
@@ -258,24 +275,29 @@ function setupPanel() {
         h("p", { class: "muted tiny" }, "Sent with every input as `reference`; point wordings at it. Changing it starts fresh cells."),
         h("button", { type: "button", onclick: () => {
           const patch = { name: name.value, reference: refBox.value };
-          const bad = !locked && type === "score" ? S.crit.map(levelFromEdit).findIndex(r => r.error) : -1;
-          if (bad >= 0) { S.setupErr = `Level ${bad}: ${levelFromEdit(S.crit[bad]).error}`; drawAll(); return; }
+          const res = !locked && type === "score" ? S.crit.map(levelFromEditor) : [], bad = res.findIndex(r => r.error);
+          if (bad >= 0) { S.setupErr = `Level ${bad}: ${res[bad].error}`; drawAll(); return; }
           if (!locked) { patch.type = type; patch.criteria = critFromEditor(type, S.crit); }
           S.pendingType = null; saveDoc(patch);
         } }, "Save question")),
       h("section", { class: "stack" },
         h("h2", {}, "Add inputs"),
-        h("textarea", { rows: 4, value: S.newRows, "aria-label": "New inputs, one per line",
-                        placeholder: "One input per line", oninput: ev => { S.newRows = ev.target.value; } }),
+        h("p", { class: "muted small" }, "One input as named fields. Questions refer to them by name, e.g. `answer`."),
+        kvEditor(S.newFields, noop, redraw, { label: "Input field" }),
         h("div", { class: "row" },
-          h("button", { type: "button", onclick: async () => {
-            const lines = S.newRows.split(/\r?\n/).filter(l => l.trim());
-            if (lines.length && await saveDoc({ rows: [...e.rows, ...lines.map(l => ({ input: l }))] })) { S.newRows = ""; drawAll(); }
-          } }, "Add inputs"),
+          h("button", { type: "button", onclick: addFormInput }, "Add input"),
           file, h("button", { type: "button", onclick: () => file.click() }, "Import .txt / .csv"),
           h("button", { type: "button", id: "lib-exp-input", title: "Add inputs from the JSON library (data/json/inputs)",
                         onclick: () => openLibrary("exp-input", addLibraryRows) }, "Load JSON"),
-          h("span", { class: "muted small" }, "CSV columns: input, label, tags"))),
+          h("span", { class: "muted small" }, "CSV columns: input, label, tags")),
+        h("details", {},
+          h("summary", { class: "muted small" }, "Paste lines (one text input per line)"),
+          h("textarea", { rows: 4, value: S.newRows, "aria-label": "New inputs, one per line",
+                          placeholder: "One input per line", oninput: ev => { S.newRows = ev.target.value; } }),
+          h("button", { type: "button", onclick: async () => {
+            const lines = S.newRows.split(/\r?\n/).filter(l => l.trim());
+            if (lines.length && await saveDoc({ rows: [...e.rows, ...lines.map(l => ({ input: l }))] })) { S.newRows = ""; drawAll(); }
+          } }, "Add lines"))),
       h("section", { class: "stack" },
         h("h2", {}, "Add variant"),
         h("textarea", { id: "new-col", rows: 3, value: S.newCol, "aria-label": "New variant wording",

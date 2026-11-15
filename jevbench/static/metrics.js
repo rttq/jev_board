@@ -231,6 +231,33 @@ export function levelFromEdit(s) {
     : { error: "must be a non-empty JSON object" };
 }
 
+// "name → value" rows for editing an object: kind text (string), list (strings, one per line)
+// or json (any other value, so numbers, booleans and nested objects keep their type).
+const isStrList = v => Array.isArray(v) && v.every(x => typeof x === "string");
+export const kvRows = obj => Object.entries(obj || {}).map(([key, v]) =>
+  typeof v === "string" ? { key, kind: "text", value: v }
+  : isStrList(v) ? { key, kind: "list", value: v.join("\n") }
+  : { key, kind: "json", value: JSON.stringify(v, null, 2) });
+export function kvObject(rows) {
+  const out = {};
+  for (const [i, r] of rows.entries()) {
+    const key = r.key.trim(), raw = r.value.replace(/\r/g, "");
+    if (!key && !raw.trim()) continue;
+    if (!key) return { error: `row ${i + 1}: the name is missing` };
+    if (Object.hasOwn(out, key)) return { error: `\`${key}\` appears twice` };
+    if (r.kind === "list") out[key] = raw.split("\n").map(s => s.trim()).filter(Boolean);
+    else if (r.kind === "json") {
+      try { out[key] = JSON.parse(raw); } catch (err) { return { error: `\`${key}\`: not valid JSON: ${err.message}` }; }
+    } else out[key] = raw;
+  }
+  return Object.keys(out).length ? { value: out } : { error: "add at least one field" };
+}
+// Score level editor state: {mode: "text" | "fields", text, rows}.
+export const levelToEditor = l => (typeof l === "string" ? { mode: "text", text: l, rows: [] }
+  : l && typeof l === "object" && !Array.isArray(l) && Object.keys(l).length ? { mode: "fields", text: "", rows: kvRows(l) }
+  : { mode: "text", text: JSON.stringify(l), rows: [] });
+export const levelFromEditor = st => (st.mode === "fields" ? kvObject(st.rows) : levelFromEdit(st.text));
+
 const canon = v => (v === undefined ? null : Array.isArray(v) ? v.map(canon)
   : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, canon(v[k])])) : v);
 const sameCriteria = (a, b) => JSON.stringify(canon(a ?? null)) === JSON.stringify(canon(b ?? null));

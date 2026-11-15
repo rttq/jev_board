@@ -6,7 +6,7 @@
 |-------|--------|----------|----------|
 | Run → Input panel | **Load JSON** | `inputs` | Next to "Attach image" |
 | Run → Questions panel | **Load questions** | `questions` | In the panel header |
-| Experiment → Setup → Add inputs | **Load JSON** | `inputs` | Next to "Import .txt / .csv" |
+| Experiment → Setup → Add inputs | **Load JSON** | `inputs` | Next to "Import .txt / .csv". Add inputs is a name → value form (US7); a one-record file fills it ("Fill the form"), a list file adds every row. One-per-line text is under "Paste lines" |
 | Experiment → Setup → Add variant | **Load questions** | `questions` | Next to the add-variant button |
 
 ## Picker dialog (`<dialog id="lib">`, modal)

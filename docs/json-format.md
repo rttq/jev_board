@@ -79,7 +79,7 @@ Jev judges each level on its own, against the input, without seeing the other le
 
 - Examples help only when they look like the real inputs. Unrelated examples change little.
 - Check a change on cases whose right level you know, not by whether confidence went up.
-- In the app's level editor, an object level is edited as JSON text. Text that starts with `{` must be a valid, non-empty JSON object.
+- In the app, switch a level to **fields** to edit it as name → value rows (text, list or JSON), or keep it as JSON text. Text that starts with `{` must be a valid, non-empty JSON object.
 
 ## Files meant for one experiment
 

@@ -1,5 +1,5 @@
 // jevbench frontend. Plain ES module, no build. All user text goes through textContent (h()), never innerHTML.
-import { freeId, levelText, levelToEdit, levelFromEdit } from "./metrics.js";
+import { freeId, levelText, levelFromEdit, kvRows, kvObject, levelToEditor, levelFromEditor } from "./metrics.js";
 
 // ---------- tiny DOM helper ----------
 export function h(tag, attrs = {}, ...kids) {
@@ -206,14 +206,14 @@ function newQuestion(type) {
   const used = new Set(draft.questions.map(q => q.id));
   let n = 1; while (used.has("q" + n)) n++;
   return { id: "q" + n, type, instructions: "", choice: [{ key: "", desc: "" }, { key: "", desc: "" }],
-           levels: ["", ""], yes: "", no: "" };
+           levels: [levelToEditor(""), levelToEditor("")], yes: "", no: "" };
 }
 
 function fromWire(id, w) {
   const q = { id, type: w.type, instructions: typeof w.instructions === "string" ? w.instructions : JSON.stringify(w.instructions),
-              choice: [{ key: "", desc: "" }, { key: "", desc: "" }], levels: ["", ""], yes: "", no: "" };
+              choice: [{ key: "", desc: "" }, { key: "", desc: "" }], levels: [levelToEditor(""), levelToEditor("")], yes: "", no: "" };
   if (w.type === "choice") q.choice = Object.entries(w.criteria || {}).map(([key, d]) => ({ key, desc: typeof d === "string" ? d : "" }));
-  if (w.type === "score") q.levels = (w.criteria || []).map(levelToEdit);
+  if (w.type === "score") q.levels = (w.criteria || []).map(levelToEditor);
   if (w.type === "noul") { q.yes = w.criteria?.true || ""; q.no = w.criteria?.false || ""; }
   return q;
 }
@@ -248,7 +248,7 @@ export async function openInEditor(run) {
 export function toWire(q) {
   const w = { type: q.type, instructions: q.instructions.trim() };
   if (q.type === "choice") w.criteria = Object.fromEntries(q.choice.filter(o => o.key.trim()).map(o => [o.key.trim(), o.desc.trim() || null]));
-  if (q.type === "score") w.criteria = q.levels.map(l => levelFromEdit(l).value);
+  if (q.type === "score") w.criteria = q.levels.map(st => levelFromEditor(st).value);
   if (q.type === "noul") {  // API shape: {true?, false?}, omitted when both empty
     const c = {};
     if (q.yes.trim()) c.true = q.yes.trim();
@@ -275,9 +275,9 @@ function validateDraft() {
       else if (new Set(keys).size !== keys.length) e[f + ".criteria"] = "Options must be unique.";
     }
     if (q.type === "score") {
-      const bad = q.levels.map(levelFromEdit).findIndex(r => r.error);
-      if (q.levels.length < 2 || q.levels.some(l => !l.trim())) e[f + ".criteria"] = "A Score needs at least 2 levels, none empty.";
-      else if (bad >= 0) e[f + ".criteria"] = `Level ${bad}: ${levelFromEdit(q.levels[bad]).error}`;
+      const res = q.levels.map(levelFromEditor), bad = res.findIndex(r => r.error);
+      if (q.levels.length < 2) e[f + ".criteria"] = "A Score needs at least 2 levels, none empty.";
+      else if (bad >= 0) e[f + ".criteria"] = `Level ${bad}: ${res[bad].error}`;
     }
     if (q.type === "box") {
       if (!draft.image) e[f + ".criteria"] = "Box needs an image. Attach a PNG or JPEG above.";
@@ -310,19 +310,56 @@ export function choiceEditor(options, onChange, onStructure) {
     h("button", { class: "link", type: "button", onclick: () => { options.push({ key: "", desc: "" }); onStructure(); } }, "+ option"));
 }
 
+// "name → value" rows ({key, kind, value}, see kvRows in metrics.js). `label` prefixes the aria-labels.
+export function kvEditor(rows, onChange, onStructure, { addLabel = "+ field", label = "Field" } = {}) {
+  const KINDS = [["text", "text"], ["list", "list"], ["json", "JSON"]];
+  return h("div", { class: "kv" },
+    rows.map((r, i) => h("div", { class: "kv-row" },
+      h("input", { class: "key", value: r.key, placeholder: "name", "aria-label": `${label} ${i + 1} name`,
+                   oninput: e => { r.key = e.target.value; onChange(); } }),
+      h("select", { "aria-label": `${label} ${i + 1} kind`, onchange: e => { r.kind = e.target.value; onStructure(); } },
+        KINDS.map(([v, l]) => h("option", { value: v, selected: r.kind === v }, l))),
+      h("textarea", { value: r.value, rows: r.kind === "text" ? 1 : 3, "aria-label": `${label} ${i + 1} value`,
+                      placeholder: r.kind === "list" ? "one item per line" : r.kind === "json" ? "JSON value" : "value",
+                      oninput: e => { r.value = e.target.value; onChange(); } }),
+      h("button", { class: "link", type: "button", "aria-label": `Remove ${label.toLowerCase()} ${i + 1}`, disabled: rows.length <= 1,
+                    onclick: () => { rows.splice(i, 1); onStructure(); } }, "✕"))),
+    h("button", { class: "link", type: "button", onclick: () => { rows.push({ key: "", kind: "text", value: "" }); onStructure(); } }, addLabel));
+}
+
+// levels: editor states from levelToEditor ({mode: "text" | "fields", text, rows}).
 export function levelsEditor(levels, onChange, onStructure) {
   const move = (i, d) => { [levels[i], levels[i + d]] = [levels[i + d], levels[i]]; onStructure(); };
+  // Each switch rebuilds the other form from the one being left, so edits made in either mode carry over.
+  const setMode = (st, mode) => {
+    if (mode === st.mode) return;
+    if (mode === "fields") {
+      const parsed = levelFromEdit(st.text);
+      if (parsed.value && typeof parsed.value === "object") st.rows = kvRows(parsed.value);
+      else if (st.text.trim()) st.rows = [{ key: "description", kind: "text", value: st.text.trim() }];
+      else if (!st.rows.length) st.rows = [{ key: "description", kind: "text", value: "" }];
+    } else {
+      const o = kvObject(st.rows);
+      if (o.value) st.text = JSON.stringify(o.value);
+    }
+    st.mode = mode; onStructure();
+  };
   return h("div", {},
-    h("p", { class: "muted small" }, "Ordered from lowest to highest. Describe each level concretely."),
-    levels.map((l, i) => h("div", { class: "crit-row" },
-      h("span", { class: "muted small", style: "width:1.5em;text-align:right" }, String(i)),
-      h("input", { value: l, placeholder: `level ${i}`, "aria-label": `Level ${i}`,
-                   oninput: e => { levels[i] = e.target.value; onChange(); } }),
-      h("button", { class: "link", type: "button", "aria-label": `Move level ${i} up`, disabled: i === 0, onclick: () => move(i, -1) }, "↑"),
-      h("button", { class: "link", type: "button", "aria-label": `Move level ${i} down`, disabled: i === levels.length - 1, onclick: () => move(i, 1) }, "↓"),
-      h("button", { class: "link", type: "button", "aria-label": `Remove level ${i}`, disabled: levels.length <= 2,
-                    onclick: () => { levels.splice(i, 1); onStructure(); } }, "✕"))),
-    h("button", { class: "link", type: "button", onclick: () => { levels.push(""); onStructure(); } }, "+ level"));
+    h("p", { class: "muted small" }, "Ordered from lowest to highest. Describe each level concretely; use fields for a description with examples."),
+    levels.map((st, i) => h("div", {},
+      h("div", { class: "crit-row" },
+        h("span", { class: "muted small", style: "width:1.5em;text-align:right" }, String(i)),
+        st.mode === "fields" ? h("span", { style: "flex:1" })
+          : h("input", { value: st.text, placeholder: `level ${i}`, "aria-label": `Level ${i}`,
+                         oninput: e => { st.text = e.target.value; onChange(); } }),
+        h("span", { class: "seg", role: "group", "aria-label": `Level ${i} format` },
+          ["text", "fields"].map(m => h("button", { type: "button", "aria-pressed": String(st.mode === m), onclick: () => setMode(st, m) }, m))),
+        h("button", { class: "link", type: "button", "aria-label": `Move level ${i} up`, disabled: i === 0, onclick: () => move(i, -1) }, "↑"),
+        h("button", { class: "link", type: "button", "aria-label": `Move level ${i} down`, disabled: i === levels.length - 1, onclick: () => move(i, 1) }, "↓"),
+        h("button", { class: "link", type: "button", "aria-label": `Remove level ${i}`, disabled: levels.length <= 2,
+                      onclick: () => { levels.splice(i, 1); onStructure(); } }, "✕")),
+      st.mode === "fields" && h("div", { class: "kv-level" }, kvEditor(st.rows, onChange, onStructure, { label: `Level ${i} field` })))),
+    h("button", { class: "link", type: "button", onclick: () => { levels.push(levelToEditor("")); onStructure(); } }, "+ level"));
 }
 
 function questionCard(q, idx, rerender) {

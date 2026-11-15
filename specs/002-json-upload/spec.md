@@ -137,6 +137,26 @@ The Jev docs allow a Score level to be an object instead of a string, for exampl
 
 ---
 
+### User Story 7 - Edit JSON as "name → value" rows (Priority: P3)
+
+Raw JSON text is easy to get wrong: a pasted text became a `text` input when the questions asked about `answer`, and an object Score level is one long line of JSON. The user wants one shared editor of rows, each a field name and its value, in two places: the experiment's **Add inputs** panel and the **Score level** editor (experiment Setup and Run view). Loading a file fills the rows.
+
+**Why this priority**: It prevents silent field-name mistakes and makes object levels editable. Everything already works through JSON text, so it is an enhancement.
+
+**Independent Test**: In an experiment, type `answer` → a text in the input form and add it; the new row's input is `{"answer": …}`. Load a one-record input file: the form fills with its fields, and nothing is added until the user confirms. In a Score level, switch to fields, enter `description` and an `examples` list, save, and check the level is stored as an object.
+
+**Acceptance Scenarios**:
+
+1. **Given** the Add inputs form has rows `answer` → "…" and `topic` → "…", **When** the user clicks Add input, **Then** one JSON row `{"answer": "…", "topic": "…"}` is added, and the form keeps the field names with empty values for the next input.
+2. **Given** an input file with one record, **When** it is confirmed from Load JSON in experiment Setup, **Then** the form fills with that record's fields and values, and no row is added until Add input.
+3. **Given** an input file with several records, **When** it is confirmed, **Then** all records are added as rows (as today), and the form takes the first record's field names with empty values.
+4. **Given** a value is a list of texts, **When** it is shown in the form, **Then** it is edited as one item per line. Any other non-text value (number, true/false, nested object) is edited as JSON and keeps its type.
+5. **Given** a Score level, **When** the user switches it from text to fields (or loads a question file with object levels), **Then** the level shows as rows, e.g. `description` (text) and `examples` (list), and saves as an object.
+6. **Given** a row has a value but no name, two rows share a name, a JSON value does not parse, or all rows are empty, **When** the user adds or saves, **Then** the form names the problem and nothing is added or saved.
+7. **Given** the user needs many plain-text inputs at once, **When** they open "Paste lines", **Then** the old one-input-per-line box still works.
+
+---
+
 ### Edge Cases
 
 - **Library folders missing or deleted while the app runs**: they are recreated on the next Load JSON or Load questions, and the picker shows the empty state.
@@ -213,6 +233,10 @@ The Jev docs allow a Score level to be an object instead of a string, for exampl
 - **FR-035**: The system MUST remember, for the current session, the last file loaded in each place, and the picker MUST preselect it.
 - **FR-036**: A Score level MUST be either a non-empty text or a non-empty JSON object. Object levels MUST be sent to Jev unchanged from the Run view and from experiments, and MUST compare equal to the file's levels when matching experiment criteria.
 - **FR-037**: Level editors MUST show an object level as JSON text and turn text that starts with `{` back into an object on save. Invalid JSON and `{}` MUST be rejected with a message naming the level.
+- **FR-038**: One shared "name → value" editor MUST turn an object into rows and back. A value kind is text, list of texts (one per line) or JSON (any other value, which keeps its type). A round trip MUST reproduce the object.
+- **FR-039**: Experiment Setup MUST offer this editor for adding one JSON input at a time. The old one-per-line box MUST remain under "Paste lines".
+- **FR-040**: Load JSON in experiment Setup MUST fill the form from a one-record file instead of adding it, and for a multi-record file MUST add all rows (FR-030) and set the form's field names from the first record. Its confirm button MUST say which of the two will happen.
+- **FR-041**: Each Score level in the Run view and experiment Setup MUST be editable either as text or as fields with this editor. Object levels from a file MUST open as fields. FR-037 (FR-036 storage) still applies.
 
 ### Key Entities
 

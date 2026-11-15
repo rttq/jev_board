@@ -291,7 +291,7 @@ export function openLibrary(place, onLoad, opts = {}) {
     else if (!an) reason = "Reading…";
     else if (!an.ok) reason = "This file cannot be loaded: " + an.error.message;
     else if (place === "run-input") label = an.inputs.shape === "list" ? `Load record #${st.rec + 1}` : "Load";
-    else if (place === "exp-input") label = `Add ${plural(an.inputs.records.length, "row")}`;
+    else if (place === "exp-input") label = an.inputs.records.length === 1 ? "Fill the form" : `Add ${plural(an.inputs.records.length, "row")}`;
     else if (place === "run-questions") label = `Load ${plural(Object.keys(an.questions).length, "question")}`;
     else {
       const k = opts.exp ? matchQuestions(opts.exp, an.questions).columns.length : 0;

@@ -16,7 +16,7 @@ description: "Task list for JSON Library (inputs and questions)"
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependency on an incomplete task)
-- **[Story]**: US1–US6 from spec.md (US6 was added after the feature shipped)
+- **[Story]**: US1–US7 from spec.md (US6 and US7 were added after the feature shipped)
 - Most tasks touch `jevbench/library.py`, `jevbench/static/library.js` or `jevbench/static/app.js`, so `[P]` is used only where the files really differ
 
 ## Path Conventions
@@ -317,6 +317,90 @@ Existing package at repo root: `jevbench/` (server + `jevbench/static/` page) an
 
 ---
 
+## Phase 10: User Story 7 - Edit JSON as "name → value" rows (Priority: P3)
+
+**Goal**: One shared editor of rows (field name → value) replaces raw JSON text in two places: experiment Setup → **Add inputs**, and every **Score level** (experiment Setup and Run view). Loading a file fills the rows (spec US7, FR-038–FR-041).
+
+**Independent Test**: In an experiment, enter `answer` → a text and click Add input: the new row's input is `{"answer": "…"}`, not a `text` row. Load a one-record input file: the form fills and nothing is added yet. Load `data/json/questions/rag-indexing.json` into a new experiment: each level shows `description` and `examples` as rows, and Save keeps them as objects.
+
+**Design** (decided here so every task agrees):
+
+- Editor row state: `{key, kind, value}`, where `kind` is `"text"` (a string), `"list"` (an array of strings, edited one per line) or `"json"` (any other value, edited as JSON text, so numbers, booleans and nested objects keep their type)
+- Score level editor state: `{mode: "text" | "fields", text, rows}`. Text mode keeps US6 behavior (`levelFromEdit`). Fields mode uses the row editor
+- Pure conversions live in `jevbench/static/metrics.js` (tested in Node). DOM lives in `jevbench/static/app.js` (`kvEditor`, reused by `experiments.js`)
+- The Run view's own "Input fields as JSON" box is out of scope
+
+### Tests for User Story 7
+
+- [X] T052 [P] [US7] In `tests/metrics.test.mjs`, test the conversions from T053:
+  - `kvRows({answer: "a", tags: ["x", "y"], n: 2, flag: true, nested: {a: 1}, nums: [1, 2], empty: []})` gives kinds text, list, json, json, json, json, list; the list value is `"x\ny"`;
+  - `kvObject(kvRows(obj)).value` deep-equals `obj` for that object;
+  - `kvObject` skips rows where both name and value are blank; a list ignores blank lines and trims items;
+  - `kvObject` errors on: a value with no name, a duplicate name, a JSON value that does not parse, and no named rows at all. Each error text names the field or row number;
+  - `levelToEditor("calm")` is text mode; `levelToEditor({description: "d", examples: ["x"]})` is fields mode with 2 rows; `levelFromEditor(levelToEditor(obj)).value` deep-equals `obj`; `levelFromEditor({mode: "text", text: "  "})` gives an error
+
+### Implementation for User Story 7
+
+- [X] T053 [US7] In `jevbench/static/metrics.js`, next to `levelFromEdit`, export:
+  - `kvRows(obj)`: for each entry, a string → `{key, kind: "text", value}`; an array whose items are all strings (including `[]`) → `{kind: "list", value: items.join("\n")}`; anything else → `{kind: "json", value: JSON.stringify(v, null, 2)}`;
+  - `kvObject(rows)`: build the object in row order. Skip rows whose `key.trim()` and `value.trim()` are both empty. Errors: `row ${i + 1}: the name is missing`; `` `${key}` appears twice ``; `` `${key}`: not valid JSON: ${message} ``; `add at least one field`. Text keeps the value as typed (only `\r` removed); list splits on newlines, trims, drops blank lines; json is `JSON.parse`. Returns `{value}` or `{error}`;
+  - `levelToEditor(l)`: a string → `{mode: "text", text: l, rows: []}`; a plain object with keys → `{mode: "fields", text: "", rows: kvRows(l)}`; anything else → text mode with `JSON.stringify(l)`;
+  - `levelFromEditor(st)`: fields mode → `kvObject(st.rows)`; text mode → `levelFromEdit(st.text)`
+- [X] T054 [US7] In `jevbench/static/app.js`, add and export `kvEditor(rows, onChange, onStructure, { addLabel = "+ field" } = {})`, next to `levelsEditor`. One `.kv-row` per row:
+  - name `<input class="key">` (`aria-label` "Field N name");
+  - kind `<select>` with text / list / JSON (`aria-label` "Field N kind"); changing kind calls `onStructure()`;
+  - value `<textarea>` (`aria-label` "Field N value"), 1 row for text and 3 for list or JSON, placeholder "one item per line" for list;
+  - ✕ remove button (`aria-label` "Remove field N"), disabled when only one row is left;
+  - after the rows, a link button `addLabel` that pushes `{key: "", kind: "text", value: ""}` and calls `onStructure()`.
+
+  Typing updates the row object in place and calls `onChange()`, the same way `choiceEditor` does
+- [X] T055 [P] [US7] In `jevbench/static/style.css`, after `.crit-row`, add `.kv-row` as a grid: `grid-template-columns: minmax(6em, 10em) 6.5em minmax(0, 1fr) auto; gap: 6px; margin-top: 6px; align-items: start`. Make the textarea fill its cell with `resize: vertical`. Under `@media (max-width: 560px)`, use two columns (name + kind on the first line, value + ✕ on the second) so there is no horizontal scroll at phone width
+- [X] T056 [US7] Rework `levelsEditor(levels, onChange, onStructure)` in `jevbench/static/app.js` (around line 313) so `levels` holds level editor states from T053. For each level keep the index, ↑ ↓ ✕ and "+ level" (which now pushes `levelToEditor("")`). Add a small `.seg` toggle "text | fields" (`aria-pressed`):
+  - text mode shows today's single `<input>` bound to `st.text`;
+  - fields mode shows `kvEditor(st.rows, onChange, onStructure)` in an indented block;
+  - switching to fields with no rows seeds them: from the parsed object if `levelFromEdit(st.text)` gives one, otherwise `[{key: "description", kind: "text", value: st.text}]`. Switching to text with an empty `st.text` seeds it with `JSON.stringify` of `kvObject(st.rows).value` when that is valid
+- [X] T057 [US7] Point the Run view at the new level state in `jevbench/static/app.js`:
+  - `newQuestion` and `fromWire` (lines 209, 214): default `levels` is `[levelToEditor(""), levelToEditor("")]`;
+  - `fromWire` (line 216): `.map(levelToEditor)`;
+  - `toWire` (line 251): `.map(st => levelFromEditor(st).value)`;
+  - `validateDraft` (lines 277–280): fewer than 2 levels → today's message; otherwise the first level whose `levelFromEditor` gives an error → `` `Level ${i}: ${error}` ``.
+
+  Update the import on line 2 (`levelToEdit` is then unused here)
+- [X] T058 [US7] Point experiment Setup at the new level state in `jevbench/static/experiments.js`:
+  - `critToEditor` (line 83): `.map(levelToEditor)` with default `["", ""]`;
+  - `critFromEditor` (line 89): `e.map(st => levelFromEditor(st).value)`;
+  - the Save check (lines 261–262): `levelFromEditor` instead of `levelFromEdit`.
+
+  Update the `./metrics.js` import on line 3
+- [X] T059 [US7] Add-inputs form in `jevbench/static/experiments.js` → `setupPanel` (lines 267–274):
+  - state `S.newFields`. Initialize it in `load()` (line 62): if the experiment has JSON rows, `kvRows` of the last JSON row's fields with every value cleared, else `[{key: "text", kind: "text", value: ""}]` (the app's default field name for text inputs);
+  - render `kvEditor(S.newFields, noop, redraw, { addLabel: "+ field" })` and an **Add input** button. On click: `kvObject(S.newFields)`. On error, set `S.setupErr` and `drawAll()`. On success, `saveDoc({ rows: [...e.rows, { input: { kind: "json", fields: value } }] })`, then clear the values and keep names and kinds;
+  - keep the old textarea and its button, unchanged, inside `<details><summary>Paste lines (one text input per line)</summary>…</details>`, renamed to "Add lines". Keep "Import .txt / .csv" and "Load JSON" in the same row as Add input
+- [X] T060 [US7] Load JSON → form in `jevbench/static/experiments.js` → `addLibraryRows` (line 184):
+  - if `an.inputs.records.length === 1`: set `S.newFields = kvRows(records[0])`, set `S.setupMsg` to "Form filled from <path>. Check the fields, then click Add input.", set `S.openSetup = true`, call `drawAll()`, and do not save;
+  - otherwise keep today's behavior, then set `S.newFields` to `kvRows(records[0])` with the values cleared
+- [X] T061 [P] [US7] In `jevbench/static/library.js:294`, make the `exp-input` confirm label `"Fill the form"` when the file has exactly one record, and keep `` `Add ${plural(n, "row")}` `` otherwise
+
+**Checkpoint**: Inputs can be added as named fields, one-record files fill the form, and Score levels edit as rows in both views. Text levels and plain-text inputs behave as before.
+
+### Docs and verification for User Story 7
+
+- [X] T062 [P] [US7] Docs:
+  - `docs/json-format.md` → "Score levels as objects": replace the last bullet with "In the app, switch a level to **fields** to edit it as name → value rows (text, list or JSON), or keep it as JSON text";
+  - `specs/002-json-upload/contracts/ui.md`: on the Experiment → Setup → Add inputs line, note the field form, "Paste lines", and that a one-record file fills the form
+- [X] T063 [US7] Run `uv run python -m unittest discover -s tests` and `node --test "tests/*.test.mjs"`, and fix any failures
+- [X] T064 [US7] Browser check with the Playwright MCP tools against `--data-dir .checks/data --port 8799`. No Jev request is needed:
+  1. new experiment → form `answer` → "тест" → Add input. `GET /api/experiments/<id>` shows the row as `{"kind": "json", "fields": {"answer": "тест"}}`;
+  2. Load JSON with a one-record file (e.g. `rag-speech.json` copied to `.checks/data/json/inputs/`): the button says "Fill the form", the form fills, and the row count does not change;
+  3. Load questions `score-objects.json`: levels open in fields mode with `description` (text) and `examples` (list). Change one example and Save: the stored level is an object with the change;
+  4. switch a level to text and back: no data lost. Enter a bad JSON value: Save shows the error;
+  5. Run view: Load questions with the same file. Levels show as fields, and `toWire` gives objects (check via History → Open in editor, or by reading the draft in `browser_evaluate`);
+  6. phone width (390 px): no horizontal scroll in Setup.
+
+  Log the results in `.checks/REPORT.md` with a screenshot of the form and of a fields-mode level
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -330,6 +414,7 @@ Existing package at repo root: `jevbench/` (server + `jevbench/static/` page) an
 - **US5 (Phase 7)**: Depends on Foundational. T033 also reuses fixtures from T014, T020 and T026, so it runs best after them
 - **Polish (Phase 8)**: Depends on all stories
 - **US6 (Phase 9)**: Added after 002 shipped. Depends only on the finished code. T040–T041 can be written first and fail until T042–T043 land. T042 (helpers) blocks T044, T046 and T047. T043 is independent. T050–T051 come last
+- **US7 (Phase 10)**: Builds on US6 (`levelFromEdit`). T053 blocks T056–T060. T054 (`kvEditor`) blocks T056 and T059. T056 blocks T057–T058. T052 can be written first. T063–T064 come last
 
 ### Within Each Story
 
@@ -342,6 +427,7 @@ Existing package at repo root: `jevbench/` (server + `jevbench/static/` page) an
 - T011 (tests) and T013 (CSS) in parallel with T012 (dialog shell)
 - In each story, the `tests/*` task and the `metrics.js` task are `[P]` against the `library.py` / `library.js` tasks
 - After Foundational, US4 (questions) can proceed in parallel with US1–US3 (inputs): they touch different functions (`_questions` and `_inputs`), but the same files, so coordinate the edits
+- US7: T052 (tests), T055 (CSS), T061 (`library.js`) and T062 (docs) run in parallel with T053–T054. T057 (`app.js`) and T058–T060 (`experiments.js`) can run in parallel after T056
 - US6: after T042, these touch different files and can run in parallel: T043 (`jev.py`) + T041, T044–T045 (`app.js`), T046–T047 (`experiments.js`), T048 (`library.js`), T049 (docs)
 
 ---

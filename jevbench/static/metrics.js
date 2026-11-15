@@ -216,6 +216,21 @@ export function freeId(id, taken) {
   for (let n = 2; ; n++) if (!taken.has(`${id}_${n}`)) return `${id}_${n}`;
 }
 
+// Score levels are text or (per the Jev docs) an object such as {description, examples}.
+// levelText: short label for display; levelToEdit / levelFromEdit: the editor's text form and back.
+export const levelText = l => (typeof l === "string" ? l
+  : typeof l?.description === "string" && l.description.trim() ? l.description : JSON.stringify(l));
+export const levelToEdit = l => (typeof l === "string" ? l : JSON.stringify(l));
+export function levelFromEdit(s) {
+  const t = String(s ?? "").trim();
+  if (!t) return { error: "empty level" };
+  if (!t.startsWith("{")) return { value: t };  // "[ниже нормы]" stays text
+  let v;
+  try { v = JSON.parse(t); } catch (err) { return { error: "not valid JSON: " + err.message }; }
+  return v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length ? { value: v }
+    : { error: "must be a non-empty JSON object" };
+}
+
 const canon = v => (v === undefined ? null : Array.isArray(v) ? v.map(canon)
   : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, canon(v[k])])) : v);
 const sameCriteria = (a, b) => JSON.stringify(canon(a ?? null)) === JSON.stringify(canon(b ?? null));

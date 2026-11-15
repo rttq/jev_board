@@ -118,6 +118,10 @@ class TestFoundation(Base):
         self.assertTrue(v({"q": {**CHOICE, "criteria": {"apple": None}}}, False, "jev-latest"))
         self.assertTrue(v({"q": {**SCORE, "criteria": ["only"]}}, False, "jev-latest"))
         self.assertTrue(v({"q": {**SCORE, "criteria": ["a", ""]}}, False, "jev-latest"))
+        objs = [{"description": "a"}, {"description": "b", "examples": ["x"]}]
+        self.assertEqual(v({"q": {**SCORE, "criteria": objs}}, False, "jev-latest"), [])
+        self.assertEqual(v({"q": {**SCORE, "criteria": ["a", *objs]}}, False, "jev-latest"), [])
+        self.assertTrue(v({"q": {**SCORE, "criteria": ["a", {}]}}, False, "jev-latest"))
         box = {"type": "box", "instructions": "the apple in `image`"}
         self.assertTrue(v({"q": box}, False, "jev-latest"))
         self.assertTrue(v({"q": box}, True, "jev-1.13.0"))

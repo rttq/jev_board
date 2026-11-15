@@ -16,7 +16,7 @@ description: "Task list for JSON Library (inputs and questions)"
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependency on an incomplete task)
-- **[Story]**: US1–US5 from spec.md
+- **[Story]**: US1–US6 from spec.md (US6 was added after the feature shipped)
 - Most tasks touch `jevbench/library.py`, `jevbench/static/library.js` or `jevbench/static/app.js`, so `[P]` is used only where the files really differ
 
 ## Path Conventions
@@ -259,6 +259,64 @@ Existing package at repo root: `jevbench/` (server + `jevbench/static/` page) an
 
 ---
 
+## Phase 9: User Story 6 - Describe Score levels with objects (Priority: P3)
+
+**Goal**: A Score level can be a JSON object (e.g. `{"description": "…", "examples": ["…"]}`, per the Jev Score docs). It reaches Jev unchanged from the Run view and from experiments, saves without errors, and never shows as `[object Object]` (spec US6, FR-036, FR-037).
+
+**Independent Test**: Load a question file with a Score question whose levels are objects. Run it once from the Run view and once from an experiment. In History, the recorded criteria are objects, not JSON strings. Before the experiment's first run, change its name and save Setup: the save succeeds and the levels stay objects.
+
+**Today's defects this phase fixes** (from code reading):
+
+- Run view: `fromWire` turns an object level into a JSON string (`jevbench/static/app.js:216`), and `toWire` sends that string (`jevbench/static/app.js:251`)
+- Experiment Setup: `critToEditor` puts the object itself into a text input, which shows `[object Object]` (`jevbench/static/experiments.js:83`). `critFromEditor` calls `.trim()` on it, so any Setup save before the first run throws (`jevbench/static/experiments.js:89`)
+- Display: the cell hint and label picker print the object (`jevbench/static/experiments.js:450`, `:461`), and the answer legend does too if Jev echoes objects (`jevbench/static/app.js:615`, `:628`, `:630`)
+- Server: `str(x).strip()` accepts `{}` as a level (`jevbench/jev.py:74`)
+
+### Tests for User Story 6
+
+- [X] T040 [P] [US6] In `tests/metrics.test.mjs`, add a test for the three level helpers from T042:
+  - `levelToEdit("calm") === "calm"`, and `levelToEdit({description: "d"})` equals `JSON.stringify({description: "d"})`;
+  - `levelFromEdit(" calm ")` gives `{value: "calm"}`; `levelFromEdit('{"description":"d"}')` gives `{value: {description: "d"}}`; round trip `levelFromEdit(levelToEdit(obj)).value` deep-equals `obj`;
+  - `levelFromEdit("{oops")`, `levelFromEdit("{}")` and `levelFromEdit("  ")` each give `{error: <text>}`; `levelFromEdit("[ниже нормы]")` stays text;
+  - `levelText("calm") === "calm"`; `levelText({description: "d", examples: ["x"]}) === "d"`; `levelText({examples: ["x"]})` equals `JSON.stringify({examples: ["x"]})`
+- [X] T041 [P] [US6] In `tests/test_core.py` → `test_validation_rules`, assert that `{**SCORE, "criteria": [{"description": "a"}, {"description": "b", "examples": ["x"]}]}` validates with `[]`, a mix of text and object levels validates with `[]`, and `{**SCORE, "criteria": ["a", {}]}` returns an error
+
+### Implementation for User Story 6
+
+- [X] T042 [US6] In `jevbench/static/metrics.js` (pure functions, already imported by `app.js` and `experiments.js`), export:
+  - `levelText(l)`: a string → itself; an object with a non-empty string `description` → that; any other object → `JSON.stringify(l)`;
+  - `levelToEdit(l)`: a string → itself; anything else → `JSON.stringify(l)`;
+  - `levelFromEdit(s)`: trim. Empty → `{error: "empty level"}`. Starts with `{` → `JSON.parse`; on failure `{error: "not valid JSON: " + message}`; if the result is not a plain object (array or null) or has no keys → `{error: "must be a non-empty JSON object"}`; else `{value: obj}`. Anything else → `{value: trimmed}`
+- [X] T043 [US6] In `jevbench/jev.py:74`, change the Score rule so each level counts as non-empty when it is a dict with at least one key, or otherwise when `str(x).strip()` is non-empty (keeps today's behavior for text). Keep the existing error message
+- [X] T044 [US6] Run view in `jevbench/static/app.js` (import the helpers from `./metrics.js` next to `freeId`):
+  - `fromWire` (line 216): map Score levels with `levelToEdit` instead of the inline `JSON.stringify`;
+  - `toWire` (line 251): map with `levelFromEdit(l).value`;
+  - `validateDraft` (lines 277–278): keep the "at least 2 levels" check, and for the first level whose `levelFromEdit` gives an error set `e[f + ".criteria"] = \`Level ${i}: ${error}\``. Empty levels keep today's message
+- [X] T045 [US6] Answer view in `jevbench/static/app.js` → `renderAnswer.score` (lines 613–630): wrap every `a.legend[...]` that is shown as text (`nearest`, the tick `title`, the `barLine` label) in `levelText`
+- [X] T046 [US6] Experiment Setup in `jevbench/static/experiments.js` (add `levelText, levelToEdit, levelFromEdit` to the `./metrics.js` import on line 3):
+  - `critToEditor` (line 83): `(c || ["", ""]).map(levelToEdit)`;
+  - `critFromEditor` (line 89): `e.map(l => levelFromEdit(l).value)`;
+  - the Setup save handler (lines 259–262): when not `locked` and the type is `score`, check every level with `levelFromEdit` first. On the first error, set `S.setupErr = \`Level ${i}: ${error}\``, call `drawAll()` and do not call `saveDoc`
+- [X] T047 [US6] In `jevbench/static/experiments.js`, use `levelText(S.exp.criteria[x.level])` for both the `title` and the text in `cellText` (line 450). In `labelOptions` (line 461), compute `const t = levelText(l)` and truncate `t` instead of `l`
+- [X] T048 [P] [US6] In `jevbench/static/library.js:278`, leave the full JSON for object levels in the preview, but render it with `white-space: pre-wrap` via `JSON.stringify(l, null, 2)` inside a `<code>` so the examples stay readable
+- [X] T049 [P] [US6] In `docs/json-format.md`:
+  - in the "Criteria by type" table, change the `score` row to: "Required. A **list** of at least 2 levels, from lowest to highest. A level is a non-empty text or a non-empty object, e.g. `{\"description\": \"…\", \"examples\": [\"…\"]}`. Use the same fields on every level";
+  - add a short "Score levels as objects" paragraph after the table: when to use them (neighboring levels get confused), that examples help only when they look like the real inputs, and that in the app's level editor an object level is edited as JSON text
+
+**Checkpoint**: US6 works in the Run view and in experiments. Text-level questions behave exactly as before.
+
+### Verification for User Story 6
+
+- [X] T050 [US6] Run `uv run python -m unittest discover -s tests` and `node --test "tests/*.test.mjs"`, and fix any failures
+- [X] T051 [US6] Live check against the real Jev API (costs one request per run). Put `.checks/data/json/questions/score-objects.json` with one Score question of 3 object levels (`description` + `examples`), start the app with `--data-dir .checks/data --port 8799`, and use the Playwright MCP tools:
+  1. Run view: Load questions → run on a short text. In History, the run's criteria are objects, and the answer legend shows the descriptions, not `[object Object]`;
+  2. new experiment: Load questions → rename it and set a reference → Save. No error, and the levels stay objects;
+  3. run one cell, then check the cell hint and the label picker.
+
+  Record in `.checks/REPORT.md` what Jev returns in `legend` for object levels (the object itself or text). If Jev rejects object levels, stop and report it, because then US6 needs a different design
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -271,6 +329,7 @@ Existing package at repo root: `jevbench/` (server + `jevbench/static/` page) an
 - **US4 (Phase 6)**: Depends on Foundational only
 - **US5 (Phase 7)**: Depends on Foundational. T033 also reuses fixtures from T014, T020 and T026, so it runs best after them
 - **Polish (Phase 8)**: Depends on all stories
+- **US6 (Phase 9)**: Added after 002 shipped. Depends only on the finished code. T040–T041 can be written first and fail until T042–T043 land. T042 (helpers) blocks T044, T046 and T047. T043 is independent. T050–T051 come last
 
 ### Within Each Story
 
@@ -283,6 +342,7 @@ Existing package at repo root: `jevbench/` (server + `jevbench/static/` page) an
 - T011 (tests) and T013 (CSS) in parallel with T012 (dialog shell)
 - In each story, the `tests/*` task and the `metrics.js` task are `[P]` against the `library.py` / `library.js` tasks
 - After Foundational, US4 (questions) can proceed in parallel with US1–US3 (inputs): they touch different functions (`_questions` and `_inputs`), but the same files, so coordinate the edits
+- US6: after T042, these touch different files and can run in parallel: T043 (`jev.py`) + T041, T044–T045 (`app.js`), T046–T047 (`experiments.js`), T048 (`library.js`), T049 (docs)
 
 ---
 

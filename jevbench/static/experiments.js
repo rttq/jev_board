@@ -1,6 +1,6 @@
 // Experiments: list, setup, and the matrix dashboard. Live controls re-render from applyView with no fetch.
 import { h, api, app, registerView, fmtProb, fmtUSD, choiceEditor, levelsEditor, renderAnswer, TYPE_LABEL, confirmDialog } from "./app.js";
-import { applyView, transpose, matrixCsv, recordSummary, matchQuestions } from "./metrics.js";
+import { applyView, transpose, matrixCsv, recordSummary, matchQuestions, levelText, levelToEdit, levelFromEdit } from "./metrics.js";
 import { openLibrary } from "./library.js";
 
 const DEFAULT_VIEW = {
@@ -80,13 +80,13 @@ const hasAnswers = () => Object.keys(S.cells).length > 0;
 
 function critToEditor(type, c) {
   if (type === "choice") return Object.entries(c || { "": null, " ": null }).map(([key, desc]) => ({ key: key.trim(), desc: desc || "" }));
-  if (type === "score") return [...(c || ["", ""])];
+  if (type === "score") return (c || ["", ""]).map(levelToEdit);
   return { yes: c?.true || "", no: c?.false || "" };
 }
 
 function critFromEditor(type, e) {
   if (type === "choice") return Object.fromEntries(e.filter(o => o.key.trim()).map(o => [o.key.trim(), o.desc.trim() || null]));
-  if (type === "score") return e.map(l => l.trim());
+  if (type === "score") return e.map(l => levelFromEdit(l).value);
   const c = {};
   if (e.yes.trim()) c.true = e.yes.trim();
   if (e.no.trim()) c.false = e.no.trim();
@@ -258,6 +258,8 @@ function setupPanel() {
         h("p", { class: "muted tiny" }, "Sent with every input as `reference`; point wordings at it. Changing it starts fresh cells."),
         h("button", { type: "button", onclick: () => {
           const patch = { name: name.value, reference: refBox.value };
+          const bad = !locked && type === "score" ? S.crit.map(levelFromEdit).findIndex(r => r.error) : -1;
+          if (bad >= 0) { S.setupErr = `Level ${bad}: ${levelFromEdit(S.crit[bad]).error}`; drawAll(); return; }
           if (!locked) { patch.type = type; patch.criteria = critFromEditor(type, S.crit); }
           S.pendingType = null; saveDoc(patch);
         } }, "Save question")),
@@ -447,7 +449,7 @@ function cellText(x, rv) {
     return [h("span", { class: "v" }, rc ? fmtUSD(rc.cost_usd) : "?"), h("span", { class: "muted tiny" }, rc?.input_tokens != null ? `${rc.input_tokens} tok` : "")];
   }
   const extra = S.exp.type === "choice" && !x.won ? h("span", { class: "alt", title: `Jev chose ${x.choice}` }, `↯${x.choice}`)
-    : S.exp.type === "score" ? h("span", { class: "muted tiny lvl", title: S.exp.criteria[x.level] }, `“${S.exp.criteria[x.level]}”`) : null;
+    : S.exp.type === "score" ? h("span", { class: "muted tiny lvl", title: levelText(S.exp.criteria[x.level]) }, `“${levelText(S.exp.criteria[x.level])}”`) : null;
   return [h("span", { class: "v" }, fmtProb(x.v)), h("span", { class: `tag tag-${x.band}`, role: "img", "aria-label": `band ${x.band}` }, TAG[x.band]), missMark(x.miss), extra];
 }
 
@@ -458,7 +460,7 @@ function labelOptions() {
   const e = S.exp;
   const opts = e.type === "noul" ? [["yes", "yes"], ["no", "no"]]
     : e.type === "choice" ? Object.keys(e.criteria || {}).map(k => [k, k])
-    : (e.criteria || []).map((l, i) => [String(i), `${i} · ${l.length > 28 ? l.slice(0, 27) + "…" : l}`]);
+    : (e.criteria || []).map((l, i) => { const t = levelText(l); return [String(i), `${i} · ${t.length > 28 ? t.slice(0, 27) + "…" : t}`]; });
   return [["", "—"], ...opts];
 }
 

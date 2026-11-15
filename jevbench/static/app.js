@@ -1,5 +1,5 @@
 // jevbench frontend. Plain ES module, no build. All user text goes through textContent (h()), never innerHTML.
-import { freeId } from "./metrics.js";
+import { freeId, levelText, levelToEdit, levelFromEdit } from "./metrics.js";
 
 // ---------- tiny DOM helper ----------
 export function h(tag, attrs = {}, ...kids) {
@@ -213,7 +213,7 @@ function fromWire(id, w) {
   const q = { id, type: w.type, instructions: typeof w.instructions === "string" ? w.instructions : JSON.stringify(w.instructions),
               choice: [{ key: "", desc: "" }, { key: "", desc: "" }], levels: ["", ""], yes: "", no: "" };
   if (w.type === "choice") q.choice = Object.entries(w.criteria || {}).map(([key, d]) => ({ key, desc: typeof d === "string" ? d : "" }));
-  if (w.type === "score") q.levels = (w.criteria || []).map(l => (typeof l === "string" ? l : JSON.stringify(l)));
+  if (w.type === "score") q.levels = (w.criteria || []).map(levelToEdit);
   if (w.type === "noul") { q.yes = w.criteria?.true || ""; q.no = w.criteria?.false || ""; }
   return q;
 }
@@ -248,7 +248,7 @@ export async function openInEditor(run) {
 export function toWire(q) {
   const w = { type: q.type, instructions: q.instructions.trim() };
   if (q.type === "choice") w.criteria = Object.fromEntries(q.choice.filter(o => o.key.trim()).map(o => [o.key.trim(), o.desc.trim() || null]));
-  if (q.type === "score") w.criteria = q.levels.map(l => l.trim());
+  if (q.type === "score") w.criteria = q.levels.map(l => levelFromEdit(l).value);
   if (q.type === "noul") {  // API shape: {true?, false?}, omitted when both empty
     const c = {};
     if (q.yes.trim()) c.true = q.yes.trim();
@@ -274,8 +274,11 @@ function validateDraft() {
       if (keys.length < 2) e[f + ".criteria"] = "A Choice needs at least 2 options.";
       else if (new Set(keys).size !== keys.length) e[f + ".criteria"] = "Options must be unique.";
     }
-    if (q.type === "score" && (q.levels.length < 2 || q.levels.some(l => !l.trim())))
-      e[f + ".criteria"] = "A Score needs at least 2 levels, none empty.";
+    if (q.type === "score") {
+      const bad = q.levels.map(levelFromEdit).findIndex(r => r.error);
+      if (q.levels.length < 2 || q.levels.some(l => !l.trim())) e[f + ".criteria"] = "A Score needs at least 2 levels, none empty.";
+      else if (bad >= 0) e[f + ".criteria"] = `Level ${bad}: ${levelFromEdit(q.levels[bad]).error}`;
+    }
     if (q.type === "box") {
       if (!draft.image) e[f + ".criteria"] = "Box needs an image. Attach a PNG or JPEG above.";
       if ((draft.model || "").startsWith("jev-1.13")) e[f + ".criteria"] = "Box needs Jev 1.14 or later.";
@@ -612,7 +615,7 @@ const renderers = {
   score(a) {
     const n = Object.keys(a.legend).length;
     const pos = n > 1 ? a.score / (n - 1) : 0;
-    const nearest = a.legend[String(Math.round(a.score))];
+    const nearest = levelText(a.legend[String(Math.round(a.score))]);
     const probs = Object.entries(a.probabilities).map(([k, p]) => [Number(k), p]).sort((x, y) => x[0] - y[0]);
     const [t1, t2] = [...probs].sort((x, y) => y[1] - x[1]);
     const split = t2 && Math.abs(t1[0] - t2[0]) > 1 && t1[1] >= 0.25 && t2[1] >= 0.25;
@@ -625,9 +628,9 @@ const renderers = {
         h("div", { class: "axis" }),
         probs.map(([i]) => h("div", { class: "tick", style: `left:${(i / (n - 1)) * 100}%` })),
         probs.map(([i]) => h("div", { class: "tick-lbl" + (i === 0 ? " first" : i === n - 1 ? " last" : ""),
-                                      style: `left:${(i / (n - 1)) * 100}%`, title: a.legend[i] }, String(i))),
+                                      style: `left:${(i / (n - 1)) * 100}%`, title: levelText(a.legend[i]) }, String(i))),
         h("div", { class: "marker", style: `left:${pos * 100}%` })),
-      probs.map(([i, p]) => barLine(`${i} · ${a.legend[i]}`, p, i === Math.round(a.score))),
+      probs.map(([i, p]) => barLine(`${i} · ${levelText(a.legend[i])}`, p, i === Math.round(a.score))),
       split && h("p", { class: "hint" }, `Split answer: levels ${t1[0]} and ${t2[0]} both carry weight. The position alone hides this.`));
   },
   box(a, { run, q, onPresence } = {}) {

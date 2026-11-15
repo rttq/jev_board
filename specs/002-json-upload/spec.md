@@ -120,6 +120,23 @@ Every file is checked before it can be used. Problems are explained in plain wor
 
 ---
 
+### User Story 6 - Describe Score levels with objects (Priority: P3)
+
+The Jev docs allow a Score level to be an object instead of a string, for example `{"description": "…", "examples": ["…"]}`, to separate levels that the model keeps confusing. The user writes such levels in a question file and expects them to reach Jev as objects, from the Run view and from experiments, and to stay readable and editable in the app.
+
+**Why this priority**: It enables a documented Jev feature the user needs for grading messy natural speech. Text levels already work, so it is an enhancement.
+
+**Independent Test**: Load a question file with a Score question whose levels are objects. Run it from the Run view and from an experiment, and check in History that the request criteria are objects, not JSON strings. Edit the experiment's name before the first run and check that Setup saves.
+
+**Acceptance Scenarios**:
+
+1. **Given** a Score level is an object in a question file, **When** it is loaded into the Run view and run, **Then** Jev receives the same object, and the run's recorded criteria equal the file's.
+2. **Given** an experiment whose Score levels are objects and that has no answers yet, **When** the user saves Setup, **Then** the save succeeds and the levels stay objects.
+3. **Given** a level is an object, **When** it is shown in a short place (answer legend, cell hint, label picker), **Then** the app shows its `description` if it has one and compact JSON otherwise, never `[object Object]`. The level editor and the library preview show the full JSON.
+4. **Given** a level in the editor starts with `{` but is not valid JSON, or is an empty object, **When** the user runs or saves, **Then** the editor marks that level with an error and nothing is sent.
+
+---
+
 ### Edge Cases
 
 - **Library folders missing or deleted while the app runs**: they are recreated on the next Load JSON or Load questions, and the picker shows the empty state.
@@ -194,6 +211,8 @@ Every file is checked before it can be used. Problems are explained in plain wor
 - **FR-033**: If the experiment has no variants and no answers, loading a question file MUST set the experiment's type and criteria from the file's first eligible question (Noul, Choice or Score) before adding variants.
 - **FR-034**: Wordings that repeat an existing variant MUST be merged as the experiment already does, and the merge MUST be reported.
 - **FR-035**: The system MUST remember, for the current session, the last file loaded in each place, and the picker MUST preselect it.
+- **FR-036**: A Score level MUST be either a non-empty text or a non-empty JSON object. Object levels MUST be sent to Jev unchanged from the Run view and from experiments, and MUST compare equal to the file's levels when matching experiment criteria.
+- **FR-037**: Level editors MUST show an object level as JSON text and turn text that starts with `{` back into an object on save. Invalid JSON and `{}` MUST be rejected with a message naming the level.
 
 ### Key Entities
 

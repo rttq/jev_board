@@ -275,7 +275,8 @@ export function openLibrary(place, onLoad, opts = {}) {
     if (w.type === "choice" && c && typeof c === "object")
       return h("ul", { class: "small" }, Object.entries(c).map(([k, d]) => h("li", {}, h("strong", {}, k), d ? ` — ${d}` : "")));
     if (w.type === "score" && Array.isArray(c))
-      return h("ol", { class: "small", start: 0 }, c.map(l => h("li", {}, typeof l === "string" ? l : JSON.stringify(l))));
+      return h("ol", { class: "small", start: 0 }, c.map(l => h("li", {}, typeof l === "string" ? l
+        : h("code", { style: "white-space:pre-wrap" }, JSON.stringify(l, null, 2)))));
     if (w.type === "noul" && c)
       return h("ul", { class: "small" }, c.true && h("li", {}, "Yes means: ", c.true), c.false && h("li", {}, "No means: ", c.false));
     return null;

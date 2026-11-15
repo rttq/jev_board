@@ -71,7 +71,8 @@ def validate_questions(questions, has_image: bool, model: str) -> list[dict]:
         t, c = q["type"], q.get("criteria")
         if t == "choice" and not (isinstance(c, dict) and len(c) >= 2):
             errs.append({"field": f + ".criteria", "error": "a Choice needs at least 2 options"})
-        if t == "score" and not (isinstance(c, list) and len([x for x in c if str(x).strip()]) >= 2 and all(str(x).strip() for x in c)):
+        level_ok = lambda x: bool(x) if isinstance(x, dict) else bool(str(x).strip())  # text, or a non-empty object
+        if t == "score" and not (isinstance(c, list) and len(c) >= 2 and all(level_ok(x) for x in c)):
             errs.append({"field": f + ".criteria", "error": "a Score needs at least 2 non-empty levels"})
         if t == "noul" and c is not None and not (
                 isinstance(c, dict) and c and set(c) <= {"true", "false"}

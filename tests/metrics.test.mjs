@@ -2,8 +2,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cellValue, band, spread, columnStats, composite, agreement, costShare, applyView, transpose,
          labelMetrics, bestThreshold, isMiss, matrixCsv,
-         recordSummary, freeId, matchQuestions }
+         recordSummary, freeId, matchQuestions, levelText, levelToEdit, levelFromEdit }
   from "../jevbench/static/metrics.js";
+
+test("Score levels: text or object, edited as JSON text", () => {
+  const obj = { description: "d", examples: ["x", "y"] };
+  assert.equal(levelToEdit("calm"), "calm");
+  assert.equal(levelToEdit({ description: "d" }), JSON.stringify({ description: "d" }));
+  assert.deepEqual(levelFromEdit(" calm "), { value: "calm" });
+  assert.deepEqual(levelFromEdit('{"description":"d"}'), { value: { description: "d" } });
+  assert.deepEqual(levelFromEdit(levelToEdit(obj)).value, obj);
+  for (const bad of ["{oops", "{}", "  "]) assert.ok(levelFromEdit(bad).error, bad);
+  assert.deepEqual(levelFromEdit("[ниже нормы]"), { value: "[ниже нормы]" });
+  assert.equal(levelText("calm"), "calm");
+  assert.equal(levelText(obj), "d");
+  assert.equal(levelText({ examples: ["x"] }), JSON.stringify({ examples: ["x"] }));
+});
 
 const T = { low: 0.5, high: 0.8 };
 

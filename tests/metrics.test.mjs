@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { cellValue, band, spread, columnStats, composite, agreement, costShare, applyView, transpose,
          labelMetrics, bestThreshold, isMiss, matrixCsv,
          recordSummary, freeId, matchQuestions, levelText, levelToEdit, levelFromEdit,
-         kvRows, kvObject, levelToEditor, levelFromEditor }
+         kvRows, kvObject, levelToEditor, levelFromEditor,
+         allSteps, gateFor, passLikelihood, chain, stepExp, missingRequests, stepLabel, chainCsv, reachable }
   from "../jevbench/static/metrics.js";
 
 test("name → value rows: object round trip, kinds, errors", () => {
@@ -268,4 +269,165 @@ test("matchQuestions: Noul with no criteria matches undefined or null", () => {
   const m = matchQuestions({ type: "noul", criteria: null, columns: [{}] },
                            { a: Q({ type: "noul", instructions: "A?" }), b: Q({ type: "noul", instructions: "B?", criteria: null }) });
   assert.equal(m.columns.length, 2);
+});
+
+// ---------- experiment steps ----------
+const VIEW = { threshold: { low: 0.5, high: 0.8 }, filters: {}, sort: { by: "input", dir: "asc" }, gate: {} };
+const row = (key, label = null) => ({ key, input: { kind: "text", text: key }, label, tags: [] });
+const col = (key, extra = {}) => ({ key, instructions: key, weight: 1, hidden: false, ...extra });
+const noulCell = v => ({ m1: { answer: { noul: v }, run_id: 1 } });
+function twoStep(over = {}, stepOver = {}) {
+  return { type: "noul", criteria: null, rows: [row("r1", "yes"), row("r2"), row("r3"), row("r4")],
+           columns: [col("c1")], view: structuredClone(VIEW), views: {}, ...over,
+           steps: [{ key: "s1", type: "noul", criteria: null, columns: [col("c2")], labels: { r1: "no" },
+                     view: structuredClone(VIEW), views: {}, ...stepOver }] };
+}
+const CELLS = { r1: { c1: noulCell(0.93) }, r2: { c1: noulCell(0.65) }, r3: { c1: noulCell(0.2) } };
+
+test("allSteps: step 1 from the top level (key s0, labels from rows), then stored steps", () => {
+  const d = allSteps(twoStep());
+  assert.deepEqual(d.map(x => [x.key, x.index, x.type]), [["s0", 0, "noul"], ["s1", 1, "noul"]]);
+  assert.deepEqual(d[0].labels, { r1: "yes", r2: null, r3: null, r4: null });
+  assert.deepEqual(d[1].labels, { r1: "no" });
+});
+
+test("stepExp: only arrived rows, with that step's labels; applyView sees just them", () => {
+  const e = twoStep(), d = allSteps(e)[1];
+  const se = stepExp(e, d, ["r1", "r3"]);
+  assert.deepEqual(se.rows.map(r => [r.key, r.label]), [["r1", "no"], ["r3", null]]);
+  assert.deepEqual(se.columns.map(c => c.key), ["c2"]);
+  assert.equal(e.rows[0].label, "yes");  // the experiment's own rows are untouched
+  const res = applyView(se, {}, {}, se.view, ["m1"]);
+  assert.deepEqual(res.rows.map(r => r.key), ["r1", "r3"]);
+});
+
+test("missingRequests: visible columns without a cell for the model; answered rows left out", () => {
+  const cols = [col("c1"), col("c2"), col("c9", { hidden: true })];
+  const cells = { r1: { c1: noulCell(0.9), c2: noulCell(0.9) }, r2: { c1: noulCell(0.9) } };
+  assert.deepEqual(missingRequests(["r1", "r2", "r3"], cols, cells, "m1"),
+                   [{ row: "r2", columns: ["c2"] }, { row: "r3", columns: ["c1", "c2"] }]);
+  assert.deepEqual(missingRequests(["r1"], cols, cells, "other").map(r => r.columns), [["c1", "c2"]]);
+});
+
+test("chain: Noul gate passes yes, stops no and review, waits until answered", () => {
+  const [s1, s2] = chain(twoStep(), CELLS, ["m1"]);
+  assert.deepEqual(Object.fromEntries(Object.entries(s1.outcome).map(([k, o]) => [k, o.state])),
+                   { r1: "pass", r2: "stop", r3: "stop", r4: "wait" });
+  assert.equal(s1.outcome.r2.band, "review");
+  assert.deepEqual(s1.counts, { entered: 4, passed: 1, stopped: 2, waiting: 1 });
+  assert.deepEqual(s2.arrived, ["r1"]);
+  assert.deepEqual(s2.counts, { entered: 1, passed: 0, stopped: 0, waiting: 1 });  // r1 not answered at step 2 yet
+  for (const s of [s1, s2]) assert.equal(s.counts.entered, s.counts.passed + s.counts.stopped + s.counts.waiting);
+});
+
+test("chain: review toggle and thresholds re-filter later steps; filters and sort never gate", () => {
+  const e = twoStep();
+  e.view.gate.review_passes = true;
+  assert.deepEqual(chain(e, CELLS, ["m1"])[1].arrived, ["r1", "r2"]);
+  const f = twoStep();
+  f.view.threshold = { low: 0.5, high: 0.6 };
+  assert.deepEqual(chain(f, CELLS, ["m1"])[1].arrived, ["r1", "r2"]);
+  const g = twoStep();
+  g.view.filters = { text: "r3", labeled: "unlabeled" }; g.view.sort = { by: "composite", dir: "desc" };
+  assert.deepEqual(chain(g, CELLS, ["m1"])[1].arrived, ["r1"]);
+});
+
+test("chain: hidden variants and weights shape p; compare uses the latest model; no visible variant waits", () => {
+  const cells = { r1: { c1: noulCell(0.9), c9: noulCell(0.1) } };
+  const e = twoStep({ columns: [col("c1"), col("c9", { hidden: true })], rows: [row("r1")] });
+  assert.equal(chain(e, cells, ["m1"])[0].outcome.r1.p, 0.9);
+  e.columns[1].hidden = false;
+  assert.equal(chain(e, cells, ["m1"])[0].outcome.r1.p, 0.5);
+  e.view.weights_override = { c9: 0 };
+  assert.equal(chain(e, cells, ["m1"])[0].outcome.r1.p, 0.9);
+  e.view.model = "compare";  // c9 has no m2 answer, so it must be hidden for r1 to be judged on m2
+  e.columns[1].hidden = true;
+  assert.equal(chain(e, { r1: { c1: { m2: { answer: { noul: 0.2 } }, m1: { answer: { noul: 0.9 } } } } },
+                     ["m2", "m1"])[0].outcome.r1.p, 0.2);
+  const none = twoStep({ columns: [col("c1", { hidden: true })] });
+  assert.deepEqual(chain(none, CELLS, ["m1"])[0].counts, { entered: 4, passed: 0, stopped: 0, waiting: 4 });
+});
+
+const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
+const SCORE_ANS = { score: 1.43, probabilities: { 0: 0.0, 1: 0.57, 2: 0.43 }, legend: { 0: "a", 1: "b", 2: "c" } };
+const CHOICE_ANS = { choice: "apple", probabilities: { apple: 0.91, pear: 0.06, tomato: 0.03 } };
+
+test("passLikelihood: Score sums levels at or above the minimum; Choice sums the passing options", () => {
+  near(passLikelihood(SCORE_ANS, "score", { minLevel: 1 }), 1.0);
+  near(passLikelihood(SCORE_ANS, "score", { minLevel: 2 }), 0.43);
+  near(passLikelihood(CHOICE_ANS, "choice", { passOptions: ["apple"] }), 0.91);
+  near(passLikelihood(CHOICE_ANS, "choice", { passOptions: ["pear", "tomato"] }), 0.09);
+  assert.equal(passLikelihood(CHOICE_ANS, "choice", { passOptions: [] }), 0);
+  assert.equal(passLikelihood(null, "noul", {}), null);
+});
+
+test("gateFor: defaults to the middle level (rounded up) and the focus option", () => {
+  const lv = n => gateFor({ type: "score", criteria: Array.from({ length: n }, (_, i) => `l${i}`), view: {} }).minLevel;
+  assert.deepEqual([lv(3), lv(4), lv(5)], [1, 2, 2]);
+  const crit = { apple: null, pear: null, tomato: null };
+  assert.deepEqual(gateFor({ type: "choice", criteria: crit, view: {} }).passOptions, ["apple"]);
+  assert.deepEqual(gateFor({ type: "choice", criteria: crit, view: { focus_option: "pear" } }).passOptions, ["pear"]);
+  assert.deepEqual(gateFor({ type: "choice", criteria: crit, view: { gate: { pass_options: [] } } }).passOptions, []);
+  assert.equal(gateFor({ type: "score", criteria: ["a", "b", "c"], view: { gate: { min_level: 0 } } }).minLevel, 0);
+});
+
+test("chain: noul → score → choice with per-type gates and review", () => {
+  const e = { type: "noul", criteria: null, rows: [row("r1")], columns: [col("c1")], view: structuredClone(VIEW),
+    steps: [{ key: "s1", type: "score", criteria: ["a", "b", "c"], columns: [col("c2")], labels: {},
+              view: { ...structuredClone(VIEW), gate: { min_level: 2 } } },
+            { key: "s2", type: "choice", criteria: { apple: null, pear: null, tomato: null }, columns: [col("c3")], labels: {},
+              view: { ...structuredClone(VIEW), gate: { pass_options: ["pear", "tomato"] } } }] };
+  const cells = { r1: { c1: noulCell(0.93), c2: { m1: { answer: SCORE_ANS } }, c3: { m1: { answer: CHOICE_ANS } } } };
+  let res = chain(e, cells, ["m1"]);
+  assert.equal(res[1].outcome.r1.state, "stop");  // P(level ≥ 2) = 0.43 < low 0.5
+  e.steps[0].view.threshold = { low: 0.4, high: 0.8 };
+  res = chain(e, cells, ["m1"]);
+  assert.deepEqual([res[1].outcome.r1.band, res[1].outcome.r1.state], ["review", "stop"]);
+  e.steps[0].view.gate.review_passes = true;
+  res = chain(e, cells, ["m1"]);
+  assert.equal(res[1].outcome.r1.state, "pass");
+  assert.equal(res[2].outcome.r1.state, "stop");  // P(pear or tomato) = 0.09
+  e.steps[1].view.gate.pass_options = [];
+  assert.equal(chain(e, cells, ["m1"])[2].counts.passed, 0);
+  e.steps[0].view.gate.min_level = 0;
+  e.steps[0].view.gate.review_passes = false;
+  assert.equal(chain(e, cells, ["m1"])[1].outcome.r1.state, "pass");  // every level counts → p = 1
+});
+
+test("chainCsv: one line per input, outcome and p per step, 'did not reach' after a stop", () => {
+  const e = twoStep();
+  e.rows[2].input.text = 'Red, "round" veg';
+  e.steps[0].view.step_name = "edible";
+  const csv = chainCsv(e, chain(e, CELLS, ["m1"]));
+  const lines = csv.replace(/^\uFEFF/, "").trim().split(/\r\n/);
+  assert.equal(lines[0], "input,tags,Step 1 · Noul outcome,Step 1 · Noul p,edible outcome,edible p");
+  assert.equal(lines.length, 1 + e.rows.length);
+  assert.equal(lines[1], "r1,,passed,0.93,waiting,");
+  assert.equal(lines[3], '"Red, ""round"" veg",,stopped,0.2,did not reach,');
+  assert.equal(lines[4], "r4,,waiting,,did not reach,");
+  assert.equal(stepLabel(allSteps(e)[0]), "Step 1 · Noul");
+});
+
+test("reachable: everything at step 1; rows stopped earlier drop out; waiting rows stay in", () => {
+  const e = twoStep(), res = chain(e, CELLS, ["m1"]);
+  assert.deepEqual(reachable(e, res, 0), ["r1", "r2", "r3", "r4"]);
+  assert.deepEqual(reachable(e, res, 1), ["r1", "r4"]);  // r2 (review) and r3 stopped; r4 waits at step 1
+  e.steps.push({ key: "s2", type: "noul", criteria: null, columns: [col("c3")], labels: {}, view: structuredClone(VIEW) });
+  assert.deepEqual(reachable(e, chain(e, CELLS, ["m1"]), 2), ["r1", "r4"]);  // r1 waits at step 2, so it may still go on
+});
+
+test("chain + applyView stay fast: 5 steps × 1,000 rows well under the 1 s redraw budget (SC-003)", () => {
+  const n = 1000, rows = Array.from({ length: n }, (_, i) => row(`r${i}`));
+  const step = k => ({ key: `s${k}`, type: "noul", criteria: null, columns: [col(`c${k}a`), col(`c${k}b`)], labels: {}, view: structuredClone(VIEW) });
+  const e = { type: "noul", criteria: null, rows, columns: [col("c0a"), col("c0b")], view: { ...structuredClone(VIEW), threshold: { low: 0.1, high: 0.2 } },
+              steps: [1, 2, 3, 4].map(step) };
+  for (const s of e.steps) s.view.threshold = { low: 0.1, high: 0.2 };
+  const cells = {};
+  rows.forEach((r, i) => { cells[r.key] = {}; for (const k of [0, 1, 2, 3, 4]) for (const x of "ab") cells[r.key][`c${k}${x}`] = noulCell(((i * 7 + k) % 10) / 10); });
+  const t0 = performance.now();
+  const res = chain(e, cells, ["m1"]);
+  for (const r of res) applyView(stepExp(e, r.def, r.arrived), cells, {}, r.def.view, ["m1"]);
+  const ms = performance.now() - t0;
+  assert.ok(res[4].arrived.length > 0, "rows reach the last step");
+  assert.ok(ms < 300, `took ${ms.toFixed(0)} ms`);
 });

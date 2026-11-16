@@ -783,6 +783,140 @@ class TestLibrary(Base):
         self.assertEqual(self.an("inputs", "bigint.json")["inputs"]["records"][0]["id"], 12345678901234567890)
 
 
+class TestSteps(Base):
+    """Experiment steps (003): storage, validation, per-step lock, cells and plan. Gates live in the browser."""
+    STEP = {"type": "score", "criteria": SCORE["criteria"], "columns": [{"instructions": SCORE["instructions"]}]}
+
+    def exp(self, fake=None, **over):
+        body = {"name": "chain", "type": "noul", "criteria": None,
+                "rows": [{"input": APPLE}, {"input": "Red round veg"}],
+                "columns": [{"instructions": NOUL["instructions"]}, {"instructions": "Does `text` describe an apple?"}],
+                **over}
+        st, out = server.dispatch(self.ctx(fake), "POST", "/api/experiments", {}, body)
+        self.assertEqual(st, 200, out)
+        return out["experiment"]
+
+    def put(self, e, fake=None, **over):
+        return server.dispatch(self.ctx(fake), "PUT", f"/api/experiments/{e['id']}", {}, {**e, **over})
+
+    def plan(self, e, fake=None, **q):
+        return server.dispatch(self.ctx(fake), "GET", f"/api/experiments/{e['id']}/plan",
+                               {"model": ["jev-latest"], **{k: [v] for k, v in q.items()}}, None)
+
+    def with_step(self, fake=None, **step):
+        e = self.exp(fake)
+        st, out = self.put(e, fake, steps=[{**self.STEP, **step}])
+        self.assertEqual(st, 200, out)
+        return out["experiment"]
+
+    def run_step(self, fake, e, row=0):
+        s = e["steps"][0]
+        wire = {"type": s["type"], "instructions": s["columns"][0]["instructions"], "criteria": s["criteria"]}
+        st, run = self.post_run(fake, {"input": e["rows"][row]["input"], "questions": {s["columns"][0]["key"]: wire},
+                                       "experiment_id": e["id"]})
+        self.assertEqual(run["status"], "ok", run)
+
+    def test_old_db_gains_steps_column(self):
+        self.conn.close()
+        path = self.data / "jevbench.db"
+        path.unlink()
+        for suffix in ("-wal", "-shm"):
+            Path(str(path) + suffix).unlink(missing_ok=True)
+        old = sqlite3.connect(path)
+        old.executescript("""CREATE TABLE experiments (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+            type TEXT NOT NULL, criteria TEXT, reference TEXT, rows TEXT NOT NULL DEFAULT '[]',
+            columns TEXT NOT NULL DEFAULT '[]', view TEXT NOT NULL DEFAULT '{}', views TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            INSERT INTO experiments(name, type, criteria, created_at, updated_at) VALUES ('old', 'noul', 'null', 't', 't');""")
+        old.commit()
+        old.close()
+        self.conn, _ = store.open_db(self.data)
+        st, out = server.dispatch(self.ctx(), "GET", "/api/experiments/1", {}, None)
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["experiment"]["steps"], [])
+
+    def test_step_keys_hashes_and_view_defaults(self):
+        e = self.with_step()
+        s = e["steps"][0]
+        self.assertEqual(s["key"], "s1")
+        self.assertEqual([c["key"] for c in s["columns"]], ["c3"])  # unique across steps
+        self.assertEqual(s["columns"][0]["question_hash"], jev.question_hash(SCORE))
+        self.assertEqual(s["view"]["gate"], {"min_level": None, "pass_options": None, "review_passes": False})
+        self.assertEqual(e["view"]["step_name"], None)
+
+    def test_step_validation(self):
+        e = self.exp()
+        st, out = self.put(e, steps=[{**self.STEP, "columns": [{"key": "c1", "instructions": "How ripe?"}]}])
+        self.assertEqual((st, out["error"]), (400, "variant key c1 is used twice"))
+        st, out = self.put(e, steps=[{**self.STEP, "type": "box"}])
+        self.assertEqual(st, 400)
+        self.assertTrue(out["error"].startswith("step 2: "), out)
+        st, out = self.put(e, steps=[{**self.STEP, "labels": {"r1": 5}}])
+        self.assertEqual(st, 400)
+        self.assertIn("label 5", out["error"])
+        st, out = self.put(e, steps=[{**self.STEP, "labels": {"r1": 2, "r9": 1}}])
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["experiment"]["steps"][0]["labels"], {"r1": 2})  # r9 does not exist
+
+    def test_per_step_lock(self):
+        fake = FakeJev()
+        e = self.with_step(fake)
+        self.run_step(fake, e)
+        st, out = self.put(e, fake, steps=[{**e["steps"][0], "type": "noul", "criteria": None}])
+        self.assertEqual(st, 409)
+        self.assertIn("Step 2", out["error"])
+        cols = [{**e["steps"][0]["columns"][0], "instructions": "How sweet is it?"}]
+        st, out = self.put(e, fake, steps=[{**e["steps"][0], "columns": cols}])
+        self.assertEqual(st, 409)
+        cols = e["steps"][0]["columns"] + [{"instructions": "How sweet is it?"}]
+        st, out = self.put(e, fake, steps=[{**e["steps"][0], "columns": cols}])
+        self.assertEqual(st, 200, out)
+        self.assertEqual(out["experiment"]["steps"][0]["columns"][-1]["key"], "c4")
+        st, out = self.put(e, fake, type="choice", criteria=CHOICE["criteria"])  # step 1 has no answers
+        self.assertEqual(st, 200, out)
+        n = self.run_count()
+        st, out = self.put(out["experiment"], fake, steps=[])
+        self.assertEqual(st, 200, out)
+        self.assertEqual(self.run_count(), n)
+
+    def test_cells_cover_steps_and_shared_question(self):
+        fake = FakeJev()
+        e = self.with_step(fake)
+        self.run_step(fake, e)
+        out = server.dispatch(self.ctx(fake), "GET", f"/api/experiments/{e['id']}", {}, None)[1]
+        self.assertIn("jev-1.14.0", out["cells"]["r1"]["c3"])
+        # a step repeating step 1's exact question shares the answer: one run fills both keys
+        st, out = self.put(e, fake, steps=[{"type": "noul", "criteria": None, "columns": [{"instructions": NOUL["instructions"]}]}])
+        self.assertEqual(st, 200, out)
+        e = out["experiment"]
+        self.post_run(fake, {"input": APPLE, "questions": {"c1": NOUL}, "experiment_id": e["id"]})
+        cells = server.dispatch(self.ctx(fake), "GET", f"/api/experiments/{e['id']}", {}, None)[1]["cells"]["r1"]
+        k = e["steps"][0]["columns"][0]["key"]
+        self.assertEqual(cells["c1"]["jev-1.14.0"]["run_id"], cells[k]["jev-1.14.0"]["run_id"])
+
+    def test_duplicate_copies_steps_and_list_shows_chain(self):
+        e = self.with_step(labels={"r1": 2}, view={"gate": {"min_level": 2, "pass_options": None, "review_passes": True}})
+        st, out = server.dispatch(self.ctx(), "POST", f"/api/experiments/{e['id']}/duplicate", {}, None)
+        self.assertEqual(st, 200, out)
+        copy = out["experiment"]["steps"][0]
+        self.assertEqual((copy["key"], [c["key"] for c in copy["columns"]], copy["labels"]), ("s1", ["c3"], {"r1": 2}))
+        self.assertEqual(copy["view"]["gate"], {"min_level": 2, "pass_options": None, "review_passes": True})
+        lst = server.dispatch(self.ctx(), "GET", "/api/experiments", {}, None)[1]
+        self.assertEqual([(x["steps"], x["columns"]) for x in lst], [(["noul", "score"], 3)] * 2)
+
+    def test_plan_per_step_and_rows(self):
+        fake = FakeJev()
+        e = self.with_step(fake)
+        st, p = self.plan(e, fake, step="s1", rows="r1")
+        self.assertEqual(st, 200, p)
+        self.assertEqual(p["requests"], [{"row": "r1", "columns": ["c3"]}])
+        st, p = self.plan(e, fake, step="zz")
+        self.assertEqual((st, p["error"]), (404, "step not found"))
+        st, p = self.plan(e, fake)  # no step: step 1, every row
+        self.assertEqual([r["row"] for r in p["requests"]], ["r1", "r2"])
+        self.assertEqual(p["requests"][0]["columns"], ["c1", "c2"])
+
+
 @unittest.skipUnless(os.environ.get("TYPESAFE_API_KEY") and os.environ.get("JEVBENCH_LIVE") == "1",
                      "live check: set JEVBENCH_LIVE=1 and TYPESAFE_API_KEY")
 class LiveSmoke(unittest.TestCase):

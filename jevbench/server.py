@@ -213,7 +213,11 @@ def h_dup_exp(ctx, params, query, body):
 def h_plan_exp(ctx, params, query, body):
     model = (query.get("model") or [None])[0] or store.get_prefs(ctx["conn"])["default_model"]
     price = store.get_prefs(ctx["conn"])["price_per_mtok"]
-    return 200, store.experiment_plan(ctx["conn"], _exp(ctx, params[0]), model, price)
+    step = (query.get("step") or [""])[0] or None
+    # ponytail: row keys in the query string, ~8k keys per URL; a POST body if experiments grow past that
+    # absent = all rows; parse_qs drops a blank `rows=`, so the page skips the plan when no row reaches a step
+    rows = [k for k in query["rows"][0].split(",") if k] if "rows" in query else None
+    return 200, _exp_call(store.experiment_plan, ctx["conn"], _exp(ctx, params[0]), model, price, step, rows)
 
 
 def h_lib_list(ctx, params, query, body):

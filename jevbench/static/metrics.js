@@ -195,6 +195,91 @@ export function matrixCsv(result, exp, compare = false) {
   return "\ufeff" + lines.map(l => l.map(csvCell).join(",")).join("\r\n") + "\r\n";
 }
 
+// ---------- experiment steps: rows walk down the chain through each step's gate ----------
+// Step 1 is the experiment's top level; steps 2..N are exp.steps. View filters and sort never gate.
+
+export function allSteps(exp) {
+  return [{ key: "s0", index: 0, type: exp.type, criteria: exp.criteria, columns: exp.columns, view: exp.view, views: exp.views,
+            labels: Object.fromEntries(exp.rows.map(r => [r.key, r.label ?? null])) },
+          ...(exp.steps || []).map((s, i) => ({ ...s, index: i + 1 }))];
+}
+
+// Gate settings with defaults: Score passes from the middle level up, Choice passes the focus option.
+export function gateFor(def) {
+  const g = def.view?.gate || {};
+  const n = def.type === "score" ? (def.criteria || []).length : 0;
+  const first = def.type === "choice" ? Object.keys(def.criteria || {})[0] : undefined;
+  return { minLevel: g.min_level ?? Math.ceil((n - 1) / 2),
+           passOptions: g.pass_options ?? [def.view?.focus_option ?? first].filter(x => x != null),
+           reviewPasses: !!g.review_passes };
+}
+
+// How likely one answer is to pass: P(yes), P(level ≥ min), or P(option in the passing set).
+export function passLikelihood(answer, type, gate) {
+  if (!answer) return null;
+  if (type === "noul") return answer.noul ?? null;
+  const p = answer.probabilities || {};
+  if (type === "score") return Object.entries(p).reduce((a, [l, x]) => a + (Number(l) >= gate.minLevel ? x : 0), 0);
+  if (type === "choice") return gate.passOptions.reduce((a, o) => a + (p[o] ?? 0), 0);
+  return null;
+}
+
+// One result per step: which rows arrived, and each one's outcome (pass / stop / wait) with its pass likelihood.
+export function chain(exp, cells, models = []) {
+  const out = [];
+  let arrived = exp.rows.map(r => r.key);
+  for (const def of allSteps(exp)) {
+    const v = def.view || {}, t = v.threshold || { low: 0.5, high: 0.8 }, g = gateFor(def);
+    const model = v.model && v.model !== "compare" ? v.model : models[0];
+    const cols = def.columns.filter(c => !c.hidden);
+    const ws = cols.map(c => v.weights_override?.[c.key] ?? c.weight ?? 1);
+    const outcome = {}, counts = { entered: arrived.length, passed: 0, stopped: 0, waiting: 0 }, next = [];
+    for (const rk of arrived) {
+      const ps = cols.map(c => passLikelihood(cells?.[rk]?.[c.key]?.[model]?.answer, def.type, g));
+      const p = !cols.length || ps.some(x => x == null) ? null : composite(ps, ws);  // judged only when fully answered
+      if (p == null) { outcome[rk] = { state: "wait", p: null, band: null }; counts.waiting++; continue; }
+      const b = band(p, t), pass = b === "yes" || (b === "review" && g.reviewPasses);
+      outcome[rk] = { state: pass ? "pass" : "stop", p, band: b };
+      if (pass) { counts.passed++; next.push(rk); } else counts.stopped++;
+    }
+    out.push({ def, arrived, outcome, counts });
+    arrived = next;
+  }
+  return out;
+}
+
+// The experiment as one step sees it: that step's question, only the arrived rows, that step's labels.
+export function stepExp(exp, def, arrived) {
+  const keep = new Set(arrived);
+  return { ...exp, type: def.type, criteria: def.criteria, columns: def.columns, view: def.view, views: def.views,
+           rows: exp.rows.filter(r => keep.has(r.key)).map(r => ({ ...r, label: def.labels[r.key] ?? null })) };
+}
+
+// Rows that could still reach step i: not stopped at any earlier step (waiting rows might pass once answered).
+export function reachable(exp, results, i) {
+  return exp.rows.filter(r => results.slice(0, i).every(res => res.outcome[r.key]?.state !== "stop")).map(r => r.key);
+}
+
+export const stepLabel = def => def.view?.step_name || `Step ${def.index + 1} · ${def.type[0].toUpperCase() + def.type.slice(1)}`;
+
+// One line per input: its outcome and pass likelihood at every step ("did not reach" after it stopped or waited).
+export function chainCsv(exp, results) {
+  const word = { pass: "passed", stop: "stopped", wait: "waiting" };
+  const head = ["input", "tags", ...results.flatMap(r => [`${stepLabel(r.def)} outcome`, `${stepLabel(r.def)} p`])];
+  const lines = exp.rows.map(row => [inputText(row.input), (row.tags || []).join(";"), ...results.flatMap(r => {
+    const o = r.outcome[row.key];
+    return o ? [word[o.state], num4(o.p)] : ["did not reach", ""];
+  })]);
+  return "﻿" + [head, ...lines].map(l => l.map(csvCell).join(",")).join("\r\n") + "\r\n";
+}
+
+// Same shape as the server plan's `requests`: visible cells with no answer for `model`.
+export function missingRequests(rowKeys, columns, cells, model) {
+  const visible = columns.filter(c => !c.hidden);
+  return rowKeys.map(row => ({ row, columns: visible.filter(c => !cells?.[row]?.[c.key]?.[model]).map(c => c.key) }))
+    .filter(r => r.columns.length);
+}
+
 // ---------- JSON library helpers (pure) ----------
 
 // One readable line for a JSON record: the first non-empty text found depth-first, with its key.

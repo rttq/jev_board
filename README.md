@@ -52,6 +52,30 @@ The full rules, ready to paste into a prompt when an AI writes these files, are 
 Files must be UTF-8 (with or without BOM). Syntax errors show their line and column; duplicate keys and
 integers beyond 2^53 (which the browser rounds) are flagged as warnings.
 
+## Experiment steps
+
+An experiment can be a chain of steps, e.g. Noul → Score → Choice. Click **+ Add step** at the bottom of the
+experiment page. Each step is a full matrix with its own type, criteria, variants, thresholds and labels. A step only
+gets the inputs that pass the **gate** of the step before, so later questions cost nothing for inputs that dropped out.
+
+A gate turns each input's answers (visible variants, weighted like the composite) into one pass likelihood:
+
+- **Noul**: P(yes).
+- **Score**: P(level ≥ the minimum level you pick). The default is the middle level.
+- **Choice**: P(one of the options you mark as passing). The default is the focus option.
+
+The step's own thresholds decide the outcome. At or above high, the input passes. Below low, it stops. In between
+is review, which stops unless **review passes** is ticked. An input waits until every visible variant has an answer.
+Filters and sorting only change what a matrix shows; they never change who passes.
+
+Moving a threshold or changing a gate re-filters every later step at once. Answers that were already paid for come
+back with no new request. The funnel under the last step shows in / passed / stopped / waiting per step.
+**Export chain CSV** gives one line per input with its outcome at every step. **Run chain** runs every step in
+order. Its confirm shows step 1's cost and an upper bound for the later steps.
+
+Step 1 holds the inputs and the shared reference, so it can't be removed. Later steps can be renamed,
+collapsed or removed (their answers stay in History).
+
 ## Tests
 
 ```powershell

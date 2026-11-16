@@ -187,10 +187,10 @@ fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
 .toolbar input[type="range"] { width: 120px; }
 .runbar { padding-top: 8px; border-top: 1px solid var(--line); }
 .row.tight { gap: 4px; flex-wrap: nowrap; }
-main:has(#grid-wrap), main:has(#hist-list) { max-width: 1680px; }
+main:has(.grid-wrap), main:has(#hist-list) { max-width: 1680px; }
 .dash-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: var(--gap); align-items: start; margin-top: 12px; }
 @media (max-width: 1000px) { .dash-layout { grid-template-columns: minmax(0, 1fr); } }
-#cell-panel { position: sticky; top: 8px; }
+#cell-panel, .cell-panel { position: sticky; top: 8px; }
 .grid-scroll { overflow: auto; max-height: 75vh; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 table.grid { border-collapse: separate; border-spacing: 0; font-size: .875rem; font-variant-numeric: tabular-nums; min-width: 100%; }
 table.grid th, table.grid td { padding: 6px 8px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); vertical-align: top; }
@@ -297,3 +297,18 @@ dialog.lib > .actions { margin-top: 10px; }
   .lib-field > :nth-child(1) { order: 1; } .lib-field > :nth-child(4) { order: 2; } .lib-field > :nth-child(5) { order: 3; }
   .lib-field > :nth-child(2) { order: 4; grid-column: 1 / -1; } .lib-field > :nth-child(3) { order: 5; grid-column: 1 / -1; }
 }
+
+/* ---------- experiment steps ---------- */
+.step + .step { margin-top: 28px; padding-top: 16px; border-top: 2px solid var(--line); }
+.step-h { margin-bottom: 8px; }
+.gate-row { padding-top: 8px; border-top: 1px dashed var(--line); }
+td.gate { font-size: .8rem; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.gate-pass { color: var(--yes); }
+td.gate-stop { color: var(--no); text-decoration: line-through; text-decoration-thickness: 1px; }
+td.gate-wait { color: var(--muted); font-weight: 400; font-style: italic; }
+.stepbar { margin-top: 24px; padding-top: 12px; border-top: 2px solid var(--line); }
+.funnel { border-collapse: collapse; margin-bottom: 12px; font-size: .875rem; font-variant-numeric: tabular-nums; }
+.funnel caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
+.funnel th, .funnel td { padding: 3px 12px; border-bottom: 1px solid var(--line); }
+.funnel thead th { text-align: right; font-weight: 600; }
+.funnel tbody th { text-align: left; font-weight: 400; color: var(--muted); }

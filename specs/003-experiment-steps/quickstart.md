@@ -5,7 +5,7 @@
 ```powershell
 uv run python -m jevbench          # opens the app
 python -m unittest tests.test_core # server tests (TestSteps)
-node --test tests/                 # metrics tests
+node --test "tests/*.test.mjs"     # metrics tests
 ```
 
 ## Checks (agent browser pass after implementation)

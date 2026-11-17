@@ -401,7 +401,8 @@ test("chainCsv: one line per input, outcome and p per step, 'did not reach' afte
   const csv = chainCsv(e, chain(e, CELLS, ["m1"]));
   const lines = csv.replace(/^\uFEFF/, "").trim().split(/\r\n/);
   assert.equal(lines[0], "input,tags,Step 1 · Noul outcome,Step 1 · Noul p,edible outcome,edible p");
-  assert.equal(lines.length, 1 + e.rows.length);
+  assert.equal(lines.length, 1 + e.rows.length + 4);
+  assert.deepEqual(lines.slice(-4), ["", "step,variant,wording", "Step 1 · Noul,v1,c1", "edible,v2,c2"]);
   assert.equal(lines[1], "r1,,passed,0.93,waiting,");
   assert.equal(lines[3], '"Red, ""round"" veg",,stopped,0.2,did not reach,');
   assert.equal(lines[4], "r4,,waiting,,did not reach,");

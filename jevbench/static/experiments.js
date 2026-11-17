@@ -152,7 +152,8 @@ async function saveDoc(patch, msgStep = "s0") {
     exp.steps = exp.steps.map(s => (views[s.key] ? { ...s, view: views[s.key] } : s));
     Object.assign(S, { exp, cells: d.cells, run_costs: d.run_costs, models: d.models, cost: d.cost });
     S.setupMsg = d.warnings?.join(" ") || null;
-    for (const def of allSteps(S.exp)) ui(def.key).crit = critToEditor(def.type, def.criteria);
+    // Reset type and criteria together: a stale pendingType with criteria rebuilt for def.type breaks the editor.
+    for (const def of allSteps(S.exp)) Object.assign(ui(def.key), { crit: critToEditor(def.type, def.criteria), pendingType: null });
     await refreshPlan();
     return true;
   } catch (err) {

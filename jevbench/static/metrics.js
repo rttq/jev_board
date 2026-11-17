@@ -179,8 +179,10 @@ export function transpose(result) {
 const csvCell = x => { const s = x == null ? "" : String(x); return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 const num4 = v => (v == null ? "" : +v.toFixed(4));
 
+const vname = key => key.replace(/^c/, "v").replace(/@.*/, "");
+const wording = x => (typeof x === "string" ? x : JSON.stringify(x));
+
 export function matrixCsv(result, exp, compare = false) {
-  const vname = key => key.replace(/^c/, "v").replace(/@.*/, "");
   const cols = result.columns;
   const name = c => vname(c.key) + (compare ? "@" + c.model : "");
   const lines = [["input", "label", "tags", ...cols.map(c => `${name(c)}: ${String(c.col.instructions)}`), "composite", "spread"],
@@ -263,6 +265,7 @@ export function reachable(exp, results, i) {
 export const stepLabel = def => def.view?.step_name || `Step ${def.index + 1} · ${def.type[0].toUpperCase() + def.type.slice(1)}`;
 
 // One line per input: its outcome and pass likelihood at every step ("did not reach" after it stopped or waited).
+// Below the table: the visible variant wordings of every step (the ones its p is composed from).
 export function chainCsv(exp, results) {
   const word = { pass: "passed", stop: "stopped", wait: "waiting" };
   const head = ["input", "tags", ...results.flatMap(r => [`${stepLabel(r.def)} outcome`, `${stepLabel(r.def)} p`])];
@@ -270,6 +273,8 @@ export function chainCsv(exp, results) {
     const o = r.outcome[row.key];
     return o ? [word[o.state], num4(o.p)] : ["did not reach", ""];
   })]);
+  lines.push([], ["step", "variant", "wording"],
+    ...results.flatMap(r => r.def.columns.filter(c => !c.hidden).map(c => [stepLabel(r.def), vname(c.key), wording(c.instructions)])));
   return "﻿" + [head, ...lines].map(l => l.map(csvCell).join(",")).join("\r\n") + "\r\n";
 }
 

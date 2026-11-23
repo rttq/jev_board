@@ -7,3 +7,7 @@ build/
 .playwright-mcp/
 .env
 data/
+optimization-plan-*.md
+
+# experiment exports kept locally
+csv/

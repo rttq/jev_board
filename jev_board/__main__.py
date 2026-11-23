@@ -6,7 +6,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import server, store
+from . import library, server, store
 
 
 ROOT = Path(__file__).resolve().parent.parent  # project root (editable install)
@@ -34,6 +34,7 @@ def main(argv=None) -> int:
     data_dir = Path(args.data_dir).expanduser()
     try:
         conn, notice = store.open_db(data_dir)
+        library.copy_demo(data_dir)
     except OSError as e:
         print(f"cannot use data folder {data_dir}: {e}", file=sys.stderr)
         return 1
@@ -55,7 +56,7 @@ def main(argv=None) -> int:
         return 1
 
     url = f"http://127.0.0.1:{args.port}"
-    print(f"jevbench running at {url}  (Ctrl+C to stop)", flush=True)
+    print(f"jev board running at {url}  (Ctrl+C to stop)", flush=True)
     print(f"data: {data_dir}", flush=True)
     print(f"api key: found (…{key[-4:]})" if key else
           f"api key: NOT FOUND, set TYPESAFE_API_KEY in {ENV_FILE}", flush=True)

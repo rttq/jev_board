@@ -1,0 +1,14 @@
+{
+  "supports": {"type": "noul", "instructions": "Does `text` confirm `claim`?",
+               "criteria": {"true": "the text states the claim or it clearly follows from it",
+                            "false": "the text contradicts the claim, covers only part of it, or does not mention it"}},
+  "supports_strict": {"type": "noul", "instructions": "Someone has read only `text`. Can they be sure that `claim` is true?",
+                      "criteria": {"true": "the text states the claim or it clearly follows from it",
+                                   "false": "the text contradicts the claim, covers only part of it, or does not mention it"}},
+  "verdict": {"type": "choice", "instructions": "How does `text` relate to `claim`?",
+              "criteria": {"supports": "the text confirms the claim",
+                           "contradicts": "the text says the opposite",
+                           "not_stated": "the text does not settle it, or only partly"}},
+  "coverage": {"type": "score", "instructions": "How much of `claim` does `text` back up?",
+               "criteria": ["none of it", "part of it", "all of it"]}
+}

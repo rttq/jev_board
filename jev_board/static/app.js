@@ -1,4 +1,4 @@
-// jevbench frontend. Plain ES module, no build. All user text goes through textContent (h()), never innerHTML.
+// jev board frontend. Plain ES module, no build. All user text goes through textContent (h()), never innerHTML.
 import { freeId, levelText, levelFromEdit, kvRows, kvObject, levelToEditor, levelFromEditor } from "./metrics.js";
 
 // ---------- tiny DOM helper ----------
@@ -27,7 +27,7 @@ export async function api(method, path, body) {
     });
   } catch {
     setOffline(true);
-    throw { status: 0, error: "Cannot reach the jevbench server. Is it still running in the terminal?" };
+    throw { status: 0, error: "Cannot reach the jev board server. Is it still running in the terminal?" };
   }
   setOffline(false);
   const data = res.status === 204 ? null : await res.json().catch(() => null);
@@ -99,7 +99,7 @@ function showBanner() {
   if (!app.status.key_present) {
     b.append(h("p", {}, h("strong", {}, "No TypeSafe API key found. "),
       "Set ", h("code", {}, "TYPESAFE_API_KEY"), " or put the key in ",
-      h("code", {}, app.status.key_file), ", then restart jevbench. ",
+      h("code", {}, app.status.key_file), ", then restart jev board. ",
       "The guide and History still work without it."));
   }
   if (app.status.notice) b.append(h("p", {}, app.status.notice));

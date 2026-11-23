@@ -1,12 +1,14 @@
 """Read-only JSON library: listing, path containment, strict parsing, analysis.
 
 Files live in <data_dir>/json/inputs (an object, or a list of objects) and <data_dir>/json/questions
-({id: {type, instructions, criteria?}}). Nothing here ever writes, renames or deletes a library file.
+({id: {type, instructions, criteria?}}). Nothing here ever writes, renames or deletes a library file,
+except copy_demo, which only adds the bundled demo files that are missing.
 """
 
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime
@@ -40,6 +42,18 @@ def root(data_dir, kind) -> Path:
     for k in KINDS:
         (base / k).mkdir(parents=True, exist_ok=True)
     return base / kind
+
+
+DEMO = Path(__file__).resolve().parent / "demo"
+
+
+def copy_demo(data_dir) -> None:
+    """Copy bundled demo files into the library; never overwrites, so a deleted one comes back on next start."""
+    for kind in KINDS:
+        for src in (DEMO / kind).glob("*.json"):
+            dst = root(data_dir, kind) / src.name
+            if not dst.exists():
+                shutil.copyfile(src, dst)
 
 
 def _inside(p: Path, r: Path) -> bool:

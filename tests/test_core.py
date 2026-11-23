@@ -1,7 +1,7 @@
 """Core checks: hashing, validation, cost, storage, run flow. No API key needed (except LiveSmoke, opt-in).
 
 Run: uv run python -m unittest discover -s tests
-Live: JEVBENCH_LIVE=1 and TYPESAFE_API_KEY (env or project .env) uv run python -m unittest tests.test_core.LiveSmoke
+Live: JEV_BOARD_LIVE=1 and TYPESAFE_API_KEY (env or project .env) uv run python -m unittest tests.test_core.LiveSmoke
 """
 
 import base64
@@ -16,8 +16,8 @@ from pathlib import Path
 import httpx2
 import typesafe_sdk as ts
 
-from jevbench import jev, library, server, store
-from jevbench.__main__ import load_env
+from jev_board import jev, library, server, store
+from jev_board.__main__ import load_env
 
 load_env()  # project .env feeds LiveSmoke
 
@@ -165,16 +165,26 @@ class TestFoundation(Base):
         self.assertNotIn("unknown", p)
         self.assertEqual(store.reset_prefs(self.conn), store.PREF_DEFAULTS)
 
+    def test_old_db_name_moves_to_new(self):
+        d = self.data / "old"
+        d.mkdir()
+        conn, _ = store.open_db(d)
+        conn.close()
+        os.replace(d / "jev_board.db", d / "jevbench.db")
+        conn, _ = store.open_db(d)
+        conn.close()
+        self.assertEqual([p.name for p in d.glob("*.db")], ["jev_board.db"])
+
     def test_corrupt_db_recovery(self):
         self.conn.close()
         d = self.data / "broken"
         d.mkdir()
-        (d / "jevbench.db").write_bytes(b"this is not a sqlite file" * 100)
+        (d / "jev_board.db").write_bytes(b"this is not a sqlite file" * 100)
         conn, notice = store.open_db(d)
         try:
             self.assertIsNotNone(notice)
             self.assertEqual(conn.execute("SELECT count(*) FROM runs").fetchone()[0], 0)
-            self.assertTrue(list(d.glob("jevbench.db.broken-*")))
+            self.assertTrue(list(d.glob("jev_board.db.broken-*")))
         finally:
             conn.close()
             self.conn, _ = store.open_db(self.data)
@@ -744,6 +754,18 @@ class TestLibrary(Base):
                 else:
                     self.assertTrue(all(f["count"] == len(out["inputs"]["records"]) for f in out["inputs"]["fields"]))
 
+    def test_demo_files_copy_once_and_load_cleanly(self):
+        library.copy_demo(self.data)
+        out = self.an("inputs", "demo-claims.json")
+        self.assertTrue(out["ok"], out["error"])
+        self.assertEqual(out["warnings"], [])
+        out = self.an("questions", "demo-claims.json")
+        self.assertTrue(out["ok"], out["error"])
+        self.assertTrue(all(q["valid"] for q in out["questions"].values()))
+        self.write("inputs", "demo-claims.json", "[]")  # the user's edit survives the next start
+        library.copy_demo(self.data)
+        self.assertEqual((self.data / "json" / "inputs" / "demo-claims.json").read_text(), "[]")
+
     # --- US5: the SC-003 set (with the files above, well over 20) ---
     def test_reading_rules(self):
         deep = '{"a": ' * 100_000 + "1" + "}" * 100_000
@@ -818,7 +840,7 @@ class TestSteps(Base):
 
     def test_old_db_gains_steps_column(self):
         self.conn.close()
-        path = self.data / "jevbench.db"
+        path = self.data / "jev_board.db"
         path.unlink()
         for suffix in ("-wal", "-shm"):
             Path(str(path) + suffix).unlink(missing_ok=True)
@@ -917,8 +939,8 @@ class TestSteps(Base):
         self.assertEqual(p["requests"][0]["columns"], ["c1", "c2"])
 
 
-@unittest.skipUnless(os.environ.get("TYPESAFE_API_KEY") and os.environ.get("JEVBENCH_LIVE") == "1",
-                     "live check: set JEVBENCH_LIVE=1 and TYPESAFE_API_KEY")
+@unittest.skipUnless(os.environ.get("TYPESAFE_API_KEY") and os.environ.get("JEV_BOARD_LIVE") == "1",
+                     "live check: set JEV_BOARD_LIVE=1 and TYPESAFE_API_KEY")
 class LiveSmoke(unittest.TestCase):
     def test_real_response_shape_matches_fakes(self):
         client = ts.TypeSafeClient()

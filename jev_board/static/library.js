@@ -1,5 +1,5 @@
 // JSON library picker: one modal dialog for input files and question files, used by the Run view and experiments.
-// The server reads and checks every file (jevbench/library.py); this module only shows the analysis and hands it on.
+// The server reads and checks every file (jev_board/library.py); this module only shows the analysis and hands it on.
 import { h, api } from "./app.js";
 import { recordSummary, matchQuestions } from "./metrics.js";
 

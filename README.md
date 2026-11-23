@@ -1,22 +1,38 @@
-# jevbench
+# jev board
 
 A local workbench for TypeSafe's Jev model. Run single questions of all four types (Noul, Choice, Score, Box), compare wordings across many inputs in an experiment matrix, label rows to measure accuracy, and keep every request and its cost in History.
+
+| Run | Experiment | History |
+|-----|------------|---------|
+| [![Run view](docs/screenshots/run.png)](docs/screenshots/run.png) | [![Experiment matrix](docs/screenshots/experiment.png)](docs/screenshots/experiment.png) | [![History](docs/screenshots/history.png)](docs/screenshots/history.png) |
 
 ## Launch
 
 ```powershell
 $env:TYPESAFE_API_KEY = "ts-..."   # or put TYPESAFE_API_KEY=ts-... in .env at the project root
 uv sync
-uv run jevbench                     # opens http://127.0.0.1:8765
+uv run jevbench                      # opens http://127.0.0.1:8765
 ```
 
 Options: `--port 8799`, `--data-dir <folder>`, `--no-browser`. Without a key, the type guide and History still work.
+
+## Try the demo
+
+Every start puts `demo-claims.json` into `data/json/inputs/` and `data/json/questions/` (if it isn't there yet):
+six short claims, each with a text that confirms it, contradicts it, or doesn't settle it.
+
+- **Run view**: switch the input to **Fields (JSON)**, click **Load JSON** → `demo-claims.json` → pick a record,
+  then **Load questions** → `demo-claims.json` (Noul, Choice and Score) → **Run**.
+- **Experiment**: **New experiment** → **Load JSON** → *Add 6 rows*, then **Load questions** → *Add 2 variants*
+  (the two Noul wordings; the experiment takes their criteria) → **Run missing**.
+
+The originals live in `jev_board/demo/`. Edit your copy freely; it is never overwritten.
 
 ## Where data lives
 
 Everything stays on your machine, in `data/` at the project root (gitignored):
 
-- `data/jevbench.db`: runs, experiments, labels, saved views and settings (SQLite)
+- `data/jev_board.db`: runs, experiments, labels, saved views and settings (SQLite)
 - `data/images/`: images sent with Box runs, named by their SHA-256
 - `data/json/inputs/`, `data/json/questions/`: your JSON library (see below)
 
@@ -86,5 +102,5 @@ node --test "tests/*.test.mjs"                # dashboard metrics, library helpe
 Optional live check against the real API (costs a fraction of a cent):
 
 ```powershell
-$env:JEVBENCH_LIVE = "1"; uv run python -m unittest tests.test_core.LiveSmoke
+$env:JEV_BOARD_LIVE = "1"; uv run python -m unittest tests.test_core.LiveSmoke
 ```

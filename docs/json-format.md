@@ -1,6 +1,6 @@
-# jevbench JSON format
+# jev board JSON format
 
-Use this when you create JSON files for jevbench, or when you ask an AI to create them (paste this whole page into the prompt).
+Use this when you create JSON files for jev board, or when you ask an AI to create them (paste this whole page into the prompt).
 There are two kinds of file, kept in two folders. Write each file as UTF-8, under 1 MB, with a `.json` name.
 
 | Folder | Holds |
@@ -125,4 +125,4 @@ Writing a reference (also when an AI writes one):
 
 ## Checking a file
 
-Put the file in its folder, then click **Load JSON** or **Load questions** in jevbench. The picker checks every file: a file that cannot be used is marked `INVALID`, with the reason and, for syntax errors, the line and column. Questions that break a rule are marked `INVALID` on their card.
+Put the file in its folder, then click **Load JSON** or **Load questions** in jev board. The picker checks every file: a file that cannot be used is marked `INVALID`, with the reason and, for syntax errors, the line and column. Questions that break a rule are marked `INVALID` on their card.

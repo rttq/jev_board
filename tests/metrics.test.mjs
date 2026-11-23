@@ -5,7 +5,7 @@ import { cellValue, band, spread, columnStats, composite, agreement, costShare, 
          recordSummary, freeId, matchQuestions, levelText, levelToEdit, levelFromEdit,
          kvRows, kvObject, levelToEditor, levelFromEditor,
          allSteps, gateFor, passLikelihood, chain, stepExp, missingRequests, stepLabel, chainCsv, reachable }
-  from "../jevbench/static/metrics.js";
+  from "../jev_board/static/metrics.js";
 
 test("name → value rows: object round trip, kinds, errors", () => {
   const obj = { answer: "a", tags: ["x", "y"], n: 2, flag: true, nested: { a: 1 }, nums: [1, 2], empty: [] };

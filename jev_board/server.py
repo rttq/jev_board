@@ -147,7 +147,7 @@ def h_export(ctx, params, query, body):
     except ValueError:
         raise ApiError(400, "experiment_id and ids must be numbers")
     ctype = "text/csv; charset=utf-8" if fmt == "csv" else "application/x-ndjson; charset=utf-8"
-    return 200, Download(data, ctype, f"jevbench-{date.today().isoformat()}.{fmt}")
+    return 200, Download(data, ctype, f"jev_board-{date.today().isoformat()}.{fmt}")
 
 
 def _exp(ctx, exp_id):
@@ -285,7 +285,7 @@ def dispatch(ctx, method, path, query, body):
 
 def make_handler(ctx):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "jevbench"
+        server_version = "jev_board"
 
         def log_message(self, fmt, *args):  # keep the terminal quiet
             pass

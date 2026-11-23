@@ -3,7 +3,7 @@
 ## Run
 
 ```powershell
-uv run python -m jevbench          # opens the app
+uv run jevbench                    # opens the app
 python -m unittest tests.test_core # server tests (TestSteps)
 node --test "tests/*.test.mjs"     # metrics tests
 ```

@@ -134,12 +134,17 @@ class ThreadConn:
 def open_db(data_dir) -> tuple["ThreadConn", str | None]:
     data_dir = Path(data_dir)
     (data_dir / "images").mkdir(parents=True, exist_ok=True)
-    path = data_dir / "jevbench.db"
+    path = data_dir / "jev_board.db"
+    old = data_dir / "jevbench.db"  # name before the rename: move it once so existing data carries over
+    if old.exists() and not path.exists():
+        for suffix in ("", "-wal", "-shm"):
+            if Path(str(old) + suffix).exists():
+                os.replace(Path(str(old) + suffix), Path(str(path) + suffix))
     try:
         return ThreadConn(path, _connect(path)), None
     except sqlite3.DatabaseError as e:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        broken = path.with_name(f"jevbench.db.broken-{stamp}")
+        broken = path.with_name(f"jev_board.db.broken-{stamp}")
         for suffix in ("", "-wal", "-shm"):
             p = Path(str(path) + suffix)
             if p.exists():

@@ -1,0 +1,14 @@
+[
+  {"claim": "The café opens at 8 am on weekdays.",
+   "text": "Opening hours: Monday to Friday 8:00–18:00, weekends 10:00–16:00."},
+  {"claim": "The laptop battery lasts a full working day.",
+   "text": "In our tests the battery ran for 4 hours of video playback before the laptop shut down."},
+  {"claim": "The museum is free for children.",
+   "text": "Tickets cost 12 € for adults and 6 € for students. Children under 7 enter free."},
+  {"claim": "The train to Lyon was cancelled.",
+   "text": "Because of the strike, all trains to Lyon are cancelled until Thursday."},
+  {"claim": "The new phone has a headphone jack.",
+   "text": "There is no 3.5 mm port, but a USB-C to 3.5 mm adapter comes in the box."},
+  {"claim": "The hotel has a swimming pool.",
+   "text": "Guests enjoy free Wi-Fi, a fitness room and breakfast served until 11."}
+]

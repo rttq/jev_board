@@ -67,7 +67,7 @@ specs/003-experiment-steps/
 ### Source Code (repository root)
 
 ```text
-jevbench/
+jev_board/
 ├── store.py             # + steps column (schema + in-place ALTER); _normalize validates steps (shared _columns helper);
 │                        #   column keys unique across steps; per-step type/criteria/wording lock; cells over all steps;
 │                        #   experiment_plan(step, rows); list_experiments → steps; DEFAULT_VIEW + gate/step_name/collapsed

@@ -1,4 +1,4 @@
-# Contract: local HTTP API (browser ↔ jevbench server)
+# Contract: local HTTP API (browser ↔ jev board server)
 
 Base URL `http://127.0.0.1:<port>`. JSON bodies (UTF-8). Errors return `{"error": "<message>", "field": "<optional path>"}` with an HTTP status.
 

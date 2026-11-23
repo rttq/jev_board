@@ -2,7 +2,7 @@
 
 ```
 jevbench [--port PORT] [--data-dir DIR] [--no-browser]
-python -m jevbench [same flags]
+python -m jev_board [same flags]
 ```
 
 | Flag | Default | Effect |
@@ -14,7 +14,7 @@ python -m jevbench [same flags]
 Startup output (stdout):
 
 ```
-jevbench running at http://127.0.0.1:8765  (Ctrl+C to stop)
+jev board running at http://127.0.0.1:8765  (Ctrl+C to stop)
 data: E:\...\jev_tests\data
 api key: found (…ab12)            # or: NOT FOUND, set TYPESAFE_API_KEY in <project>/.env
 ```

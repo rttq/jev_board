@@ -12,7 +12,7 @@ A read-only library of prepared JSON files under `data/json/`, split into `input
 
 The picker lists the folder and previews the selected file. Input files show a field tree with copyable paths, types, samples and presence counts. Question files show one card per question with its validity. The picker then loads the file into the existing draft or experiment structures.
 
-Technical approach: a new stdlib module `jevbench/library.py` does listing, path containment, strict parsing and analysis (line/column errors, BOM, duplicate keys, big integers, NaN) and reuses `jev.validate_questions`. Three routes expose it. The browser side is one new module `static/library.js` (the dialog), small hooks in `app.js` and `experiments.js`, and three pure helpers in `metrics.js`. Nothing new is stored in SQLite.
+Technical approach: a new stdlib module `jev_board/library.py` does listing, path containment, strict parsing and analysis (line/column errors, BOM, duplicate keys, big integers, NaN) and reuses `jev.validate_questions`. Three routes expose it. The browser side is one new module `static/library.js` (the dialog), small hooks in `app.js` and `experiments.js`, and three pure helpers in `metrics.js`. Nothing new is stored in SQLite.
 
 ## Technical Context
 
@@ -66,7 +66,7 @@ specs/002-json-upload/
 ### Source Code (repository root)
 
 ```text
-jevbench/
+jev_board/
 ├── library.py           # NEW: roots(), list_files(), resolve(), analyze(), reveal(); strict JSON load, field tree, question checks
 ├── server.py            # + 3 routes: GET /api/library/{kind}, GET …/file?path=, POST …/reveal
 └── static/

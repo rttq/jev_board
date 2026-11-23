@@ -4,7 +4,7 @@ No `NEEDS CLARIFICATION` remained in Technical Context. Each decision below sett
 
 ## R1. Where files are parsed and checked
 
-- **Decision**: On the server (new `jevbench/library.py`), with stdlib `json`. The browser receives a finished analysis: the parsed records or questions, a field tree, warnings and a formatted text.
+- **Decision**: On the server (new `jev_board/library.py`), with stdlib `json`. The browser receives a finished analysis: the parsed records or questions, a field tree, warnings and a formatted text.
 - **Rationale**: These checks are the main point of the feature. Python's `json` covers them in a few lines:
   - `JSONDecodeError` gives `lineno` and `colno` for syntax errors (FR-022).
   - `object_pairs_hook` sees duplicate keys before the dict drops one (FR-025).

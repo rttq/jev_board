@@ -1,6 +1,6 @@
 # Data Model: Jev Classification Workbench
 
-Storage: SQLite file `<data-dir>/jevbench.db` (default `<project>/data/`, gitignored). Images: `<data-dir>/images/<sha256>.<png|jpg>`.
+Storage: SQLite file `<data-dir>/jev_board.db` (default `<project>/data/`, gitignored). Images: `<data-dir>/images/<sha256>.<png|jpg>`.
 
 Core idea: **cells are found by content, not by links.** Every stored answer carries `input_hash` and `question_hash`. A matrix cell `(row, column, model)` is the latest successful answer whose hashes match that row's input and that column's question. So a matrix built from History, a matrix run from the dashboard, and an ad-hoc single run with the same text and wording all fill the same cell with no extra bookkeeping.
 

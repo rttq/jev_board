@@ -26,10 +26,10 @@ All findings were checked against the live TypeSafe docs (docs.typesafe.ai) on 2
 
 ## R4. Storage
 
-- **Decision**: Stdlib `sqlite3`, one file `<data-dir>/jevbench.db`. Tables: `runs` and `prefs` (a single JSON row). Questions and answers are stored as JSON text inside the run row. Images are stored as files `<data-dir>/images/<sha256>.<ext>` and the run row keeps the hash.
+- **Decision**: Stdlib `sqlite3`, one file `<data-dir>/jev_board.db`. Tables: `runs` and `prefs` (a single JSON row). Questions and answers are stored as JSON text inside the run row. Images are stored as files `<data-dir>/images/<sha256>.<ext>` and the run row keeps the hash.
 - **Rationale**: Survives restarts, gives filtering and paging for thousands of runs, needs no server. JSON columns keep the raw answer at full fidelity (`answer.model_dump(mode="json")`). Hash-named image files avoid bloating the DB and deduplicate repeated images.
 - **Default data dir**: `<project>/data/` (gitignored), overridable with `--data-dir`.
-- **Corrupt DB**: on open failure, rename it to `jevbench.db.broken-<timestamp>`, create a fresh one, and set a startup notice the UI shows.
+- **Corrupt DB**: on open failure, rename it to `jev_board.db.broken-<timestamp>`, create a fresh one, and set a startup notice the UI shows.
 - **Alternatives considered**: JSONL log file (no cheap filtering, and edits/deletes rewrite the file). Browser `localStorage` (lost if the port or origin changes, and invisible to export). Rejected.
 
 ## R5. Cost calculation

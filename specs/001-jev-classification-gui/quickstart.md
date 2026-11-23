@@ -8,7 +8,7 @@ uv sync
 uv run jevbench                       # opens http://127.0.0.1:8765
 ```
 
-Without uv: `pip install -e .` then `jevbench` (or `python -m jevbench`).
+Without uv: `pip install -e .` then `jevbench` (or `python -m jev_board`).
 
 ## Automated checks (no API key needed)
 
@@ -20,7 +20,7 @@ node --test "tests/*.test.mjs"                            # metrics.js: bands, s
 Opt-in live contract check (real API, a fraction of a cent). It confirms the real response shape and that the test fakes still match it:
 
 ```powershell
-$env:JEVBENCH_LIVE = "1"; uv run python -m unittest tests.test_core.LiveSmoke
+$env:JEV_BOARD_LIVE = "1"; uv run python -m unittest tests.test_core.LiveSmoke
 ```
 
 ## Browser checks (during implementation)
@@ -43,6 +43,6 @@ At the US1, US4 and US6 checkpoints and at the end, the coding agent drives the 
 
 | What | Where |
 |------|-------|
-| Code | `jevbench/` |
-| Data | `data/jevbench.db`, `data/images/` (project folder, gitignored) |
+| Code | `jev_board/` |
+| Data | `data/jev_board.db`, `data/images/` (project folder, gitignored) |
 | Tests | `tests/test_core.py`, `tests/metrics.test.mjs` |

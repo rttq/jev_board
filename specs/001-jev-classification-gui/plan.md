@@ -16,9 +16,9 @@ Technical approach: one terminal command starts a stdlib Python HTTP server on 1
 
 **Primary Dependencies**: `typesafe-sdk`. Everything else is stdlib (`http.server`, `sqlite3`, `json`, `csv`, `hashlib`, `webbrowser`, `argparse`).
 
-**Storage**: SQLite `<project>/data/jevbench.db` (tables `runs`, `answers`, `experiments`, `prefs`) + hash-named image files. See [data-model.md](data-model.md).
+**Storage**: SQLite `<project>/data/jev_board.db` (tables `runs`, `answers`, `experiments`, `prefs`) + hash-named image files. See [data-model.md](data-model.md).
 
-**Testing**: `python -m unittest` (`tests/test_core.py`, fake Jev client) + `node --test` (`tests/metrics.test.mjs`, Node 22 installed); opt-in live contract check (`LiveSmoke`, `JEVBENCH_LIVE=1`) that also guards the fakes against API drift; agent-driven browser checks with the Playwright MCP tools at the US1, US4 and US6 checkpoints and at the end (screenshots + `.checks/REPORT.md`, gitignored), following [quickstart.md](quickstart.md)
+**Testing**: `python -m unittest` (`tests/test_core.py`, fake Jev client) + `node --test` (`tests/metrics.test.mjs`, Node 22 installed); opt-in live contract check (`LiveSmoke`, `JEV_BOARD_LIVE=1`) that also guards the fakes against API drift; agent-driven browser checks with the Playwright MCP tools at the US1, US4 and US6 checkpoints and at the end (screenshots + `.checks/REPORT.md`, gitignored), following [quickstart.md](quickstart.md)
 
 **Target Platform**: Desktop (Windows primary; macOS/Linux), modern browser
 
@@ -60,8 +60,8 @@ specs/001-jev-classification-gui/
 ### Source Code (repository root)
 
 ```text
-pyproject.toml           # name=jevbench, deps=[typesafe-sdk], scripts: jevbench = "jevbench.__main__:main"
-jevbench/
+pyproject.toml           # name=jev_board, deps=[typesafe-sdk], scripts: jevbench = "jev_board.__main__:main"
+jev_board/
 ├── __init__.py
 ├── __main__.py          # argparse, key lookup, start server, open browser
 ├── server.py            # ThreadingHTTPServer, route table, static files, JSON helpers

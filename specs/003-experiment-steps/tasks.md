@@ -17,11 +17,11 @@ description: "Task list for Experiment Steps (linear chain with gates)"
 
 - **[P]**: Can run in parallel (different files, no dependency on an incomplete task)
 - **[Story]**: US1–US5 from spec.md
-- Most UI tasks touch `jevbench/static/experiments.js`, so `[P]` marks only tasks in other files
+- Most UI tasks touch `jev_board/static/experiments.js`, so `[P]` marks only tasks in other files
 
 ## Path Conventions
 
-Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; page: `jevbench/static/`) and `tests/`. Terms used below:
+Existing package at repo root: `jev_board/` (server: `store.py`, `server.py`; page: `jev_board/static/`) and `tests/`. Terms used below:
 - **Step 1** is the experiment's top-level `type`, `criteria`, `columns`, `rows[].label`, `view` and `views`.
 - **Steps 2..N** are `experiment.steps[]`.
 - In the browser, `allSteps(exp)` gives a uniform list. Step 1's key there is `"s0"`.
@@ -33,11 +33,11 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 **Purpose**: Add the new column and the view defaults
 
-- [X] T001 In `jevbench/store.py`:
+- [X] T001 In `jev_board/store.py`:
   - add `steps TEXT NOT NULL DEFAULT '[]'` to the `experiments` table in `SCHEMA`;
   - in `_connect`, read `PRAGMA table_info(experiments)` once into a set of column names. Keep the existing `reference` check, and add `ALTER TABLE experiments ADD COLUMN steps TEXT NOT NULL DEFAULT '[]'` when `steps` is missing.
-- [X] T002 In `jevbench/store.py`, extend `DEFAULT_VIEW` with `"gate": {"min_level": None, "pass_options": None, "review_passes": False}, "step_name": None, "collapsed": False`
-- [X] T003 [P] In `jevbench/static/experiments.js`, extend `DEFAULT_VIEW` the same way: `gate: { min_level: null, pass_options: null, review_passes: false }, step_name: null, collapsed: false`
+- [X] T002 In `jev_board/store.py`, extend `DEFAULT_VIEW` with `"gate": {"min_level": None, "pass_options": None, "review_passes": False}, "step_name": None, "collapsed": False`
+- [X] T003 [P] In `jev_board/static/experiments.js`, extend `DEFAULT_VIEW` the same way: `gate: { min_level: null, pass_options: null, review_passes: false }, step_name: null, collapsed: false`
 
 ---
 
@@ -49,12 +49,12 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 ### Server storage
 
-- [X] T004 In `jevbench/store.py`, extract two helpers from `_normalize`, with no change in behavior:
+- [X] T004 In `jev_board/store.py`, extract two helpers from `_normalize`, with no change in behavior:
   - `_check_criteria(t, criteria, where="")`: the `EXP_TYPES` check and the `jev.validate_questions` probe. It raises `ExpError(400, where + message)`.
   - `_columns(q, cols, where, warnings)`: returns the normalized column dicts (wording required, `weight`, `threshold`, `hidden`, `question_hash = jev.question_hash(_wire(q, col))`). It merges repeats within the list with the warning `where + "variant i repeats an earlier wording and was merged"`. It does **not** assign keys.
 
   Step 1 calls both with `where=""`, so every existing message stays identical
-- [X] T005 In `jevbench/store.py` `_normalize`, after rows are normalized and keyed, normalize `body.get("steps", old.get("steps", []))` per data-model.md → Step. Use `where = f"step {n + 2}: "` and:
+- [X] T005 In `jev_board/store.py` `_normalize`, after rows are normalized and keyed, normalize `body.get("steps", old.get("steps", []))` per data-model.md → Step. Use `where = f"step {n + 2}: "` and:
   - type and criteria via `_check_criteria`;
   - columns via `_columns`;
   - `labels` = the given labels whose key is an existing row key, each checked with `_label_ok(type, criteria, v)` (else `ExpError(400, where + f"label {v!r} is not valid for {type}")`);
@@ -67,28 +67,28 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
   - collect step 1's columns plus every step's columns into one list. If an explicit key appears twice, raise `ExpError(400, f"variant key {k} is used twice")`. Fill missing keys in that order with `_next_key(all_columns, "c")`, replacing the current per-list column key loop.
 
   Add `steps` to the returned `exp`
-- [X] T006 In `jevbench/store.py`:
+- [X] T006 In `jev_board/store.py`:
   - make `_exp_dict` also parse `steps`, with `None` → `[]`;
   - make `_save` write `json.dumps(exp.get("steps", []))` in both the INSERT and the UPDATE column lists;
   - confirm `duplicate_experiment` (`{**e, "name": name}`) and `experiment_from_runs` need no change (they get `steps` / `[]` automatically).
-- [X] T007 In `jevbench/store.py` `update_experiment`, apply the per-step lock from research.md R9. First compute `answered = _answered(conn, [r["input_hash"] for r in old["rows"]], [c["question_hash"] for c in all_cols(old)])`. Then:
+- [X] T007 In `jev_board/store.py` `update_experiment`, apply the per-step lock from research.md R9. First compute `answered = _answered(conn, [r["input_hash"] for r in old["rows"]], [c["question_hash"] for c in all_cols(old)])`. Then:
   1. Step 1 keeps its current check, now restricted to `any(c["question_hash"] in answered for c in old["columns"])`, so answers in later steps never lock step 1.
   2. For each new step whose key exists in `old["steps"]`: if any of that old step's column hashes are answered and its `type` or `criteria` changed, raise `ExpError(409, f"Step {pos}: type and criteria are fixed once answers exist. Duplicate the experiment to change them.")`.
   3. The wording check loops over `all_cols(old)` and `all_cols(exp)` by key.
 
   Add `all_cols` as a module-level helper
-- [X] T008 In `jevbench/store.py` `experiment_cells`:
+- [X] T008 In `jev_board/store.py` `experiment_cells`:
   - build `by_q` as `{question_hash: [col keys]}` over `all_cols(exp)`;
   - set each answer into `cells[row][key][model]` for every key in the list;
   - in `run_costs`, set `lens[key]` for every key in `by_q.get(hash, ["_" + qid])`;
   - add `# ponytail: a question shared by two steps splits its run cost over both keys; per-step cost if anyone needs it exact`.
-- [X] T009 In `jevbench/store.py`, change `experiment_plan(conn, exp, model, price)` to `experiment_plan(conn, exp, model, price, step=None, rows=None)`:
+- [X] T009 In `jev_board/store.py`, change `experiment_plan(conn, exp, model, price)` to `experiment_plan(conn, exp, model, price, step=None, rows=None)`:
   - `q = exp` when `step` is falsy. Otherwise `q` is the stored step with that key, or raise `ExpError(404, "step not found")`.
   - `visible = [c for c in q["columns"] if not c["hidden"]]`.
   - Iterate `exp["rows"]`, filtered to `set(rows)` when `rows` is given.
   - Build the chars estimate with `_wire(q, c)`.
 
-  In `jevbench/server.py` `h_plan_exp`:
+  In `jev_board/server.py` `h_plan_exp`:
   - read `step = (query.get("step") or [""])[0] or None`;
   - read `rows = [k for k in (query.get("rows") or [""])[0].split(",") if k] or None`;
   - call through `_exp_call`;
@@ -109,12 +109,12 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 ### Browser gate math (pure, `metrics.js`)
 
-- [X] T011 [P] In `jevbench/static/metrics.js`, export `allSteps(exp)`, `gateFor(def)` and `passLikelihood(answer, type, gate)` exactly as specified in data-model.md → Computed:
+- [X] T011 [P] In `jev_board/static/metrics.js`, export `allSteps(exp)`, `gateFor(def)` and `passLikelihood(answer, type, gate)` exactly as specified in data-model.md → Computed:
   - step 1 is `{key: "s0", index: 0, …, labels: Object.fromEntries(rows.map(r => [r.key, r.label ?? null]))}`;
   - the Score default is `Math.ceil((n - 1) / 2)`, with `n = criteria.length`;
   - the Choice default is `[view.focus_option ?? Object.keys(criteria || {})[0]]`;
   - Score probabilities are keyed by `String(level)`.
-- [X] T012 In `jevbench/static/metrics.js`, export `chain(exp, cells, models)`, `stepExp(exp, def, arrived)` and `missingRequests(rowKeys, columns, cells, model)` exactly as in data-model.md:
+- [X] T012 In `jev_board/static/metrics.js`, export `chain(exp, cells, models)`, `stepExp(exp, def, arrived)` and `missingRequests(rowKeys, columns, cells, model)` exactly as in data-model.md:
   - reuse `band`;
   - weights are `view.weights_override?.[key] ?? col.weight ?? 1`;
   - the gate model is `view.model` unless it is null or `"compare"`, in which case it is `models[0]`;
@@ -130,25 +130,25 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 ### Per-step rendering (refactor, no visible change)
 
-- [X] T014 In `jevbench/static/experiments.js`, add per-step UI state:
+- [X] T014 In `jev_board/static/experiments.js`, add per-step UI state:
   - `S.ui = {}`, `S.resolved = null`, `S.chain = []`;
   - a helper `ui(key)` that lazily creates `{selected: null, limit: 200, newCol: "", hideAfter: null, crit, pendingType: null, rowErrors: {}, openSetup: false, lastResult: null}` (with `crit = critToEditor(def.type, def.criteria)`).
 
   In `load()`, merge `DEFAULT_VIEW` into every stored step's view (`s.view = { ...clone(DEFAULT_VIEW), ...s.view }`). Move `S.selected`, `S.limit`, `S.newCol`, `S.hideAfter`, `S.crit`, `S.pendingType` and `S.rowErrors` into `ui(key)`. Keep `S.newRows`, `S.newFields`, `S.setupErr`, `S.setupMsg` and `S.openSetup` page-level, as step 1 inputs. In `saveDoc`, replace the `S.crit = …` line with a refresh of `ui(d.key).crit` for every `allSteps(S.exp)` entry
-- [X] T015 In `jevbench/static/experiments.js`, add the step context and the save helpers:
+- [X] T015 In `jev_board/static/experiments.js`, add the step context and the save helpers:
   - `stepCtxs()` maps `S.chain` to `{def, i, key, arrived, res, exp: stepExp(S.exp, def, arrived), ui: ui(key), el: root.querySelector("#step-" + key)}`;
   - `saveStep(st, patch)`: `st.i === 0 ? saveDoc(patch) : saveDoc({ steps: S.exp.steps.map(s => (s.key === st.key ? { ...s, ...patch } : s)) })`;
   - `setLabel(st, rowKey, val)`: step 1 writes `row.label`; others write `S.exp.steps[st.i - 1].labels`, deleting the key on `null`;
   - `wire(st, col)` uses `st.def.type` / `st.def.criteria`;
   - `hasAnswers(st) = st.def.columns.some(c => Object.values(S.cells).some(r => r[c.key]))`.
-- [X] T016 In `jevbench/static/experiments.js`, make every matrix function take `st` and read the step instead of the globals. The functions are `setupPanel`, `toolbar`, `runBar`, `cellText`, `labelOptions`, `labelCell` (via `setLabel`), `accText`, `confText`, `calText`, `useThreshold`, `cellTd`, `markSelected` (scoped to `st.el`), `colHeader`, `exportMatrix`, `mainTable`, `pivotTable`, `drawPanel` and `addLibraryVariants`:
+- [X] T016 In `jev_board/static/experiments.js`, make every matrix function take `st` and read the step instead of the globals. The functions are `setupPanel`, `toolbar`, `runBar`, `cellText`, `labelOptions`, `labelCell` (via `setLabel`), `accText`, `confText`, `calText`, `useThreshold`, `cellTd`, `markSelected` (scoped to `st.el`), `colHeader`, `exportMatrix`, `mainTable`, `pivotTable`, `drawPanel` and `addLibraryVariants`:
   - `S.exp.type/criteria/columns/view/views` → `st.exp.*` / `st.def.*`;
   - `S.selected/limit/newCol/hideAfter/crit/pendingType/rowErrors` → `st.ui.*`;
   - `lastResult` → `st.ui.lastResult`;
   - `addLibraryVariants(st, an)` uses `matchQuestions(st.exp, …)` and `saveStep`.
 
   `addLibraryRows`, `importFile`, `addFormInput` and the inputs and reference UI stay step 1 only
-- [X] T017 In `jevbench/static/experiments.js`, change `drawAll` and `drawGrid` to per-step rendering.
+- [X] T017 In `jev_board/static/experiments.js`, change `drawAll` and `drawGrid` to per-step rendering.
   - `drawAll()` renders:
     - `#exp-summary`;
     - per step, `h("section", {class: "step", id: "step-" + key, "aria-labelledby": …}, setupPanel(st), toolbar(st), h("div", {class: "dash-layout"}, h("div", {class: "grid-wrap"}), h("aside", {class: "cell-panel", "aria-label": "Cell details"})))`;
@@ -156,8 +156,8 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
   - Rename `drawGrid` to `drawGrids()`. It sets `S.chain = chain(S.exp, S.cells, S.models)`, updates the summary, and for each `st` renders `applyView(st.exp, S.cells, S.run_costs, st.def.view, S.models)` into `st.el`'s `.grid-wrap`, then `rovingGrid` and `drawPanel(st)`.
   - `changed()` → `drawGrids(); saveViewSoon()`.
   - Step 1 keeps the ids `new-col`, `exp-ref`, `lib-exp-input` and `lib-exp-questions`. Later steps use `new-col-{key}` and `lib-exp-questions-{key}`.
-  - In `jevbench/static/style.css`, change `#grid-wrap` → `.grid-wrap` (in `main:has(...)`) and `#cell-panel` → `.cell-panel`.
-- [X] T018 In `jevbench/static/experiments.js`, make the runner per step:
+  - In `jev_board/static/style.css`, change `#grid-wrap` → `.grid-wrap` (in `main:has(...)`) and `#cell-panel` → `.cell-panel`.
+- [X] T018 In `jev_board/static/experiments.js`, make the runner per step:
   - `refreshPlan()` fetches step 1's plan only to set `S.resolved = plan.resolved_model`.
   - `runBar(st)` counts `missingRequests(st.arrived, st.def.columns, S.cells, S.resolved).length`, and its reasons use that count.
   - `runMissing(st)` GETs `/plan?model=…&step=${st.i ? st.key : ""}&rows=${st.i ? st.arrived.join(",") : ""}`. When the chain has ≥ 2 steps, it prefixes the confirm text with `Step ${st.i + 1}: `. It then calls `runRequests(st, requests)`.
@@ -168,7 +168,7 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
   - `python -m unittest tests.test_core` and `node --test "tests/*.test.mjs"` pass;
   - quickstart.md check 1 in the browser on an existing experiment: same matrix, numbers, Run missing count, Export CSV, labels, saved views, Load JSON and Load questions.
 
-  Fix any regression in `jevbench/static/experiments.js` before going on
+  Fix any regression in `jev_board/static/experiments.js` before going on
 
 **Checkpoint**: Steps can be stored and validated, and gates are computed, but nothing new is visible yet
 
@@ -194,34 +194,34 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 ### Implementation for User Story 1
 
-- [X] T021 [US1] In `jevbench/static/experiments.js`, fill `.stepbar` with a `+ Add step` button (`id="add-step"`), visible for every experiment. `addStep()`:
+- [X] T021 [US1] In `jev_board/static/experiments.js`, fill `.stepbar` with a `+ Add step` button (`id="add-step"`), visible for every experiment. `addStep()`:
   1. `await saveDoc({ steps: [...S.exp.steps, { type: "noul", criteria: null, columns: [], labels: {}, view: {} }] })`;
   2. then `ui(newKey).openSetup = true`, `drawAll()`;
   3. `scrollIntoView` the new section and focus `#new-col-{key}`.
-- [X] T022 [US1] In `jevbench/static/experiments.js`, make `setupPanel(st)` render a reduced panel for `st.i > 0`, per contracts/ui.md:
+- [X] T022 [US1] In `jev_board/static/experiments.js`, make `setupPanel(st)` render a reduced panel for `st.i > 0`, per contracts/ui.md:
   - summary "Setup · question and variants";
   - the Question section: type select (disabled when `hasAnswers(st)`), criteria editor and **Save question** → `saveStep(st, {type, criteria})`;
   - the Add variant section: **+ variant** → `saveStep(st, {columns})`, and **Load questions** → `openLibrary("exp-questions", an => addLibraryVariants(st, an), {exp: {type, criteria, columns}})`;
   - no name, reference or inputs;
   - open when the step has no columns or `st.ui.openSetup`.
-- [X] T023 [US1] In `jevbench/static/experiments.js`, add a step header at the top of each section, shown only when `S.chain.length >= 2`:
+- [X] T023 [US1] In `jev_board/static/experiments.js`, add a step header at the top of each section, shown only when `S.chain.length >= 2`:
   - `h2#step-{key}-h` with the text `Step N · {view.step_name || TYPE_LABEL[type]}`;
   - the counts `{entered} in · {passed} passed · {stopped} stopped · {waiting} waiting` from `st.res.counts`;
   - `waiting for rows that pass step N-1` when `st.i > 0 && entered === 0`;
   - a **Remove** button for `st.i > 0`: `confirmDialog("Remove step?", "Step N and its setup will be removed. Its answers stay in History.", "Remove")` → `saveDoc({ steps: S.exp.steps.filter(s => s.key !== st.key) })`, then focus `#add-step`.
-- [X] T024 [US1] In `jevbench/static/experiments.js` `toolbar(st)`, add a gate row when `S.chain.length >= 2`:
+- [X] T024 [US1] In `jev_board/static/experiments.js` `toolbar(st)`, add a gate row when `S.chain.length >= 2`:
   - a `Gate` label;
   - a `review passes` checkbox bound to `st.def.view.gate.review_passes` → `changed()`;
   - the text `pass ≥ {high} · stop < {low}` from `st.def.view.threshold`;
   - `.hint` `role="status"` warnings "No visible variants: every row waits here." and "Comparing versions: the gate uses {S.models[0]}."
-- [X] T025 [US1] In `jevbench/static/experiments.js` `mainTable(st)`, add a last `gate` column when `S.chain.length >= 2`. Each cell shows `st.res.outcome[r.key]` as text per contracts/ui.md (`passes 0.91`, `review → passes 0.63`, `stops 0.12`, `review → stops 0.63`, `waiting`), with class `gate-pass` / `gate-stop` / `gate-wait`. Extend `statRow` and the agreement `colspan` by one when it is shown. Leave `pivotTable` without it
-- [X] T026 [US1] In `jevbench/static/experiments.js` `summary()`, show the chain `allSteps(S.exp).map(d => TYPE_LABEL[d.type]).join(" → ")` instead of `TYPE_LABEL[e.type]`. Count visible variants across all steps
-- [X] T027 [P] [US1] In `jevbench/static/style.css`, add:
+- [X] T025 [US1] In `jev_board/static/experiments.js` `mainTable(st)`, add a last `gate` column when `S.chain.length >= 2`. Each cell shows `st.res.outcome[r.key]` as text per contracts/ui.md (`passes 0.91`, `review → passes 0.63`, `stops 0.12`, `review → stops 0.63`, `waiting`), with class `gate-pass` / `gate-stop` / `gate-wait`. Extend `statRow` and the agreement `colspan` by one when it is shown. Leave `pivotTable` without it
+- [X] T026 [US1] In `jev_board/static/experiments.js` `summary()`, show the chain `allSteps(S.exp).map(d => TYPE_LABEL[d.type]).join(" → ")` instead of `TYPE_LABEL[e.type]`. Count visible variants across all steps
+- [X] T027 [P] [US1] In `jev_board/static/style.css`, add:
   - `.step` (top border and spacing between sections);
   - `.step-h` (header row: title, counts, buttons);
   - `.gate-pass`, `.gate-stop`, `.gate-wait` (text tags that differ by border style and weight as well as color);
   - `.stepbar` (bottom bar row).
-- [X] T028 [US1] Run quickstart.md checks 2, 3, 4, 7, 8 and 12 (`specs/003-experiment-steps/quickstart.md`) in the browser. For check 3, use the Network panel to confirm that only debounced `PUT`s go out. Fix what fails in `jevbench/static/experiments.js`
+- [X] T028 [US1] Run quickstart.md checks 2, 3, 4, 7, 8 and 12 (`specs/003-experiment-steps/quickstart.md`) in the browser. For check 3, use the Network panel to confirm that only debounced `PUT`s go out. Fix what fails in `jev_board/static/experiments.js`
 
 **Checkpoint**: noul → noul and noul → score chains work end to end (MVP)
 
@@ -243,15 +243,15 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 ### Implementation for User Story 2
 
-- [X] T030 [US2] In `jevbench/static/experiments.js` `toolbar(st)`, add to the gate row for Score steps a `Pass at level ≥` select:
+- [X] T030 [US2] In `jev_board/static/experiments.js` `toolbar(st)`, add to the gate row for Score steps a `Pass at level ≥` select:
   - options are `[i, \`${i} · ${levelText(level)}\`]` from `st.def.criteria`;
   - the selected value is `gateFor(st.def).minLevel`;
   - `onchange` → `st.def.view.gate.min_level = Number(v); changed()`.
-- [X] T031 [US2] In `jevbench/static/experiments.js` `toolbar(st)`, add to the gate row for Choice steps `Passing options:` with one checkbox per key of `st.def.criteria`:
+- [X] T031 [US2] In `jev_board/static/experiments.js` `toolbar(st)`, add to the gate row for Choice steps `Passing options:` with one checkbox per key of `st.def.criteria`:
   - checked from `gateFor(st.def).passOptions`;
   - `onchange` writes the full array of checked keys to `st.def.view.gate.pass_options`, then `changed()`.
-- [X] T032 [US2] In `jevbench/static/experiments.js` `toolbar(st)`, add the gate warnings (`.hint`, `role="status"`): "No option is marked as passing: no row can pass." when Choice `passOptions` is empty, and "Minimum level is the lowest: every judged row passes." when Score `minLevel === 0`
-- [X] T033 [US2] Run quickstart.md checks 5 and 6 (`specs/003-experiment-steps/quickstart.md`) in the browser and fix what fails in `jevbench/static/experiments.js`
+- [X] T032 [US2] In `jev_board/static/experiments.js` `toolbar(st)`, add the gate warnings (`.hint`, `role="status"`): "No option is marked as passing: no row can pass." when Choice `passOptions` is empty, and "Minimum level is the lowest: every judged row passes." when Score `minLevel === 0`
+- [X] T033 [US2] Run quickstart.md checks 5 and 6 (`specs/003-experiment-steps/quickstart.md`) in the browser and fix what fails in `jev_board/static/experiments.js`
 
 **Checkpoint**: noul → score → choice works with correct per-type gates
 
@@ -275,12 +275,12 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 ### Implementation for User Story 3
 
-- [X] T035 [US3] In `jevbench/static/metrics.js`, export:
+- [X] T035 [US3] In `jev_board/static/metrics.js`, export:
   - `stepLabel(def)` = `def.view.step_name || \`Step ${def.index + 1} · ${def.type[0].toUpperCase() + def.type.slice(1)}\``;
   - `chainCsv(exp, results)` per data-model.md, reusing `csvCell` and `inputText`. Outcomes are `passed`, `stopped`, `waiting`, `did not reach`.
-- [X] T036 [US3] In `jevbench/static/experiments.js`, add `drawFunnel()`, called at the end of `drawGrids()` when `S.chain.length >= 2`. It renders into `.stepbar` a `<table class="funnel">`: a column per step headed by `stepLabel(def)`, rows `in` / `passed` / `stopped` / `waiting`, and a caption `Passed the chain: {last step passed}`. It keeps the `+ Add step` button
-- [X] T037 [US3] In `jevbench/static/experiments.js`, extract `download(filename, text)` from `exportMatrix`. Add an **Export chain CSV** button to `.stepbar`, shown when the chain has ≥ 2 steps, that calls `download(\`${safe(S.exp.name)}-chain.csv\`, chainCsv(S.exp, S.chain))`
-- [X] T038 [P] [US3] In `jevbench/static/style.css`, add `.funnel`: a compact numeric table, right-aligned numbers, and a header row with step labels
+- [X] T036 [US3] In `jev_board/static/experiments.js`, add `drawFunnel()`, called at the end of `drawGrids()` when `S.chain.length >= 2`. It renders into `.stepbar` a `<table class="funnel">`: a column per step headed by `stepLabel(def)`, rows `in` / `passed` / `stopped` / `waiting`, and a caption `Passed the chain: {last step passed}`. It keeps the `+ Add step` button
+- [X] T037 [US3] In `jev_board/static/experiments.js`, extract `download(filename, text)` from `exportMatrix`. Add an **Export chain CSV** button to `.stepbar`, shown when the chain has ≥ 2 steps, that calls `download(\`${safe(S.exp.name)}-chain.csv\`, chainCsv(S.exp, S.chain))`
+- [X] T038 [P] [US3] In `jev_board/static/style.css`, add `.funnel`: a compact numeric table, right-aligned numbers, and a header row with step labels
 - [X] T039 [US3] Run quickstart.md check 11 (`specs/003-experiment-steps/quickstart.md`) and the SC-006 count check (the funnel equals each grid's row count with no filters) in the browser. Fix what fails
 
 **Checkpoint**: The chain's outcome is visible and exportable
@@ -301,10 +301,10 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 ### Implementation for User Story 4
 
-- [X] T041 [US4] In `jevbench/store.py` `list_experiments`, add `"steps": [e["type"], *(s["type"] for s in e["steps"])]` and set `"columns": len(all_cols(e))`. In `jevbench/static/experiments.js` `renderList`, render the Type cell as `(e.steps || [e.type]).map(t => TYPE_LABEL[t]).join(" → ")`
-- [X] T042 [US4] In `jevbench/static/experiments.js`, add a **Rename** button to the step header: `prompt("Step name:", view.step_name || "")` → `st.def.view.step_name = v.trim() || null; drawAll(); saveViewSoon()`
-- [X] T043 [US4] In `jevbench/static/experiments.js`, add a **Collapse/Expand** toggle (`aria-expanded`) to the step header that flips `st.def.view.collapsed`, then `drawAll(); saveViewSoon()`. A collapsed section renders only its header, and `drawGrids()` skips its grid. `chain()` still covers every step
-- [X] T044 [US4] In `jevbench/static/experiments.js` `toolbar(st)`, change the saved-view code:
+- [X] T041 [US4] In `jev_board/store.py` `list_experiments`, add `"steps": [e["type"], *(s["type"] for s in e["steps"])]` and set `"columns": len(all_cols(e))`. In `jev_board/static/experiments.js` `renderList`, render the Type cell as `(e.steps || [e.type]).map(t => TYPE_LABEL[t]).join(" → ")`
+- [X] T042 [US4] In `jev_board/static/experiments.js`, add a **Rename** button to the step header: `prompt("Step name:", view.step_name || "")` → `st.def.view.step_name = v.trim() || null; drawAll(); saveViewSoon()`
+- [X] T043 [US4] In `jev_board/static/experiments.js`, add a **Collapse/Expand** toggle (`aria-expanded`) to the step header that flips `st.def.view.collapsed`, then `drawAll(); saveViewSoon()`. A collapsed section renders only its header, and `drawGrids()` skips its grid. `chain()` still covers every step
+- [X] T044 [US4] In `jev_board/static/experiments.js` `toolbar(st)`, change the saved-view code:
   - read and write `st.def.views`: step 1 assigns `S.exp.views`, and other steps assign `S.exp.steps[st.i - 1].views`;
   - add `const keep = v => ({ step_name: v.step_name, collapsed: v.collapsed })`;
   - restore becomes `{ ...clone(DEFAULT_VIEW), ...clone(saved), ...keep(v) }`, and Reset view becomes `{ ...clone(DEFAULT_VIEW), ...keep(v) }`;
@@ -330,8 +330,8 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 ### Implementation for User Story 5
 
-- [X] T047 [US5] In `jevbench/static/metrics.js`, export `reachable(exp, results, i)` = `exp.rows.filter(r => results.slice(0, i).every(res => res.outcome[r.key]?.state !== "stop")).map(r => r.key)`
-- [X] T048 [US5] In `jevbench/static/experiments.js`, add a **Run chain** button (`id="run-chain"`) to `.stepbar` when the chain has ≥ 2 steps. Disable it while running, with no API key, or when no step has `missingRequests(reachable(S.exp, S.chain, i), …)` work. `runChain()` works like this:
+- [X] T047 [US5] In `jev_board/static/metrics.js`, export `reachable(exp, results, i)` = `exp.rows.filter(r => results.slice(0, i).every(res => res.outcome[r.key]?.state !== "stop")).map(r => r.key)`
+- [X] T048 [US5] In `jev_board/static/experiments.js`, add a **Run chain** button (`id="run-chain"`) to `.stepbar` when the chain has ≥ 2 steps. Disable it while running, with no API key, or when no step has `missingRequests(reachable(S.exp, S.chain, i), …)` work. `runChain()` works like this:
   1. Fetch each step's plan, with `rows` = all rows for step 1 and `reachable(S.exp, S.chain, i)` for later steps.
   2. Confirm `Step 1: {n} requests ≈ $x · Step 2: at most {n} requests ≈ $y · …`.
   3. For each step in order: run `drawGrids()` (recomputes `S.chain`), fetch the plan for `st.arrived`, call `runRequests(st, requests)` when it is non-empty, then `await refreshCells()`.
@@ -348,7 +348,7 @@ Existing package at repo root: `jevbench/` (server: `store.py`, `server.py`; pag
 
 - [X] T050 [P] In `README.md`, add an "Experiment steps" section. Cover the chain, `+ Add step`, the pass likelihood per type (Noul P(yes), Score P(level ≥ min), Choice P(option in set)), the step thresholds and review toggle, "filters don't gate", the funnel and chain CSV, Run chain, and that step 1 can't be removed
 - [X] T051 [P] In `tests/metrics.test.mjs`, add a timing sanity test. Build 5 steps × 1,000 rows with cells, and assert that `chain()` plus 5 × `applyView(stepExp(...))` takes < 300 ms (SC-003 compute budget)
-- [X] T052 In `jevbench/static/experiments.js`, do an accessibility and keyboard pass:
+- [X] T052 In `jev_board/static/experiments.js`, do an accessibility and keyboard pass:
   - every id is unique per step;
   - the grid `aria-label` is `Results matrix, step N` when there are ≥ 2 steps, and the cell panel `aria-label` is `Cell details, step N`;
   - gate states are readable as text;
@@ -393,9 +393,9 @@ Write the test task first (it may pass at once, because the gate math is foundat
 ## Parallel Example: Phase 2
 
 ```text
-Track A (server):  T004 → T005 → T006 → T007 → T008 → T009 → T010   jevbench/store.py, jevbench/server.py, tests/test_core.py
-Track B (math):    T011 → T012 → T013                                  jevbench/static/metrics.js, tests/metrics.test.mjs
-Track C (page):    (after T012) T014 → … → T018                        jevbench/static/experiments.js, style.css
+Track A (server):  T004 → T005 → T006 → T007 → T008 → T009 → T010   jev_board/store.py, jev_board/server.py, tests/test_core.py
+Track B (math):    T011 → T012 → T013                                  jev_board/static/metrics.js, tests/metrics.test.mjs
+Track C (page):    (after T012) T014 → … → T018                        jev_board/static/experiments.js, style.css
 Join:              T019
 ```
 
@@ -403,8 +403,8 @@ Join:              T019
 
 ```text
 Task: "T020 [US1] chain() Noul cases in tests/metrics.test.mjs"
-Task: "T027 [US1] .step/.step-h/.gate-*/.stepbar in jevbench/static/style.css"
-then, in order, in jevbench/static/experiments.js: T021 → T022 → T023 → T024 → T025 → T026, then T028
+Task: "T027 [US1] .step/.step-h/.gate-*/.stepbar in jev_board/static/style.css"
+then, in order, in jev_board/static/experiments.js: T021 → T022 → T023 → T024 → T025 → T026, then T028
 ```
 
 ---

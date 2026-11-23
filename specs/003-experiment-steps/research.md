@@ -1,6 +1,6 @@
 # Research: Experiment Steps
 
-No `NEEDS CLARIFICATION` remained in the Technical Context. These are the design decisions, made after reading `jevbench/store.py`, `jevbench/server.py`, `jevbench/static/experiments.js` and `jevbench/static/metrics.js`.
+No `NEEDS CLARIFICATION` remained in the Technical Context. These are the design decisions, made after reading `jev_board/store.py`, `jev_board/server.py`, `jev_board/static/experiments.js` and `jev_board/static/metrics.js`.
 
 ## R1 — Linear chain, not a node graph
 
